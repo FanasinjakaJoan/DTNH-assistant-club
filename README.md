@@ -264,6 +264,12 @@ python3 docs/mockups/serve.py 9000     # autre port
 
 Les maquettes sont servies avec `Cache-Control: no-store` : après une
 modification, un rafraîchissement suffit (aucune version fantôme en cache).
+Leur JavaScript est vérifié par un test de DOM réel (26 assertions, aucune
+erreur d'exécution) :
+
+```bash
+cd docs/mockups/test && npm i jsdom && node mockup_dom_test.mjs
+```
 
 ---
 

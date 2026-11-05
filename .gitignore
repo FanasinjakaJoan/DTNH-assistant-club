@@ -42,3 +42,7 @@ Thumbs.db
 .env
 .env.*
 secrets.json
+
+# ---------- Outils de test (Node) ----------
+node_modules/
+package-lock.json
