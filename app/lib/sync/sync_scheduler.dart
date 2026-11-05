@@ -80,7 +80,9 @@ class SyncScheduler {
   }
 
   /// Synchronisation silencieuse déclenchée par le retour du réseau.
-  Future<void> triggerBackgroundSync() => _scheduleSync();
+  Future<void> triggerBackgroundSync() async {
+    _scheduleSync();
+  }
 
   void _scheduleSync() {
     if (_isRunning) return;

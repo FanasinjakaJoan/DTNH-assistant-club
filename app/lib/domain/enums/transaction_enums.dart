@@ -145,7 +145,7 @@ enum PaymentMethod {
   final String code;
   final String label;
 
-  static PaymentMethod tryParseOrNull(String? code) {
+  static PaymentMethod? tryParseOrNull(String? code) {
     if (code == null) return null;
     final normalized = code.trim().toUpperCase().replaceAll(' ', '_');
     for (final method in PaymentMethod.values) {

@@ -5,6 +5,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/status_styles.dart';
 import '../../core/widgets/app_card.dart';
 import '../../core/widgets/common_widgets.dart';
+import '../../di/providers.dart';
 import '../../domain/entities/financial_transaction.dart';
 import '../../domain/enums/transaction_enums.dart';
 import '../settings/settings_controller.dart';
