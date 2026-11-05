@@ -1,0 +1,95 @@
+# ============================================================================
+#  DTNH Assistant Club — CI/CD Web → GitHub Pages
+# ============================================================================
+#  - À chaque push sur `main` (touchant app/) : analyze + tests + build web,
+#    puis déploiement automatique sur GitHub Pages.
+#  - Sur pull_request : build + tests uniquement (pas de déploiement).
+#  - Déclenchement manuel possible (workflow_dispatch).
+#
+#  Prérequis (une seule fois) : dépôt > Settings > Pages > Source = "GitHub Actions".
+#  URL finale : https://<owner>.github.io/DTNH-assistant-club/
+# ============================================================================
+name: Deploy Web (GitHub Pages)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - '.github/workflows/deploy.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Un seul déploiement Pages à la fois ; on annule les builds intermédiaires.
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: '3.44.9'
+
+jobs:
+  build:
+    name: Analyze, test & build web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Installer Flutter ${{ env.FLUTTER_VERSION }}
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Versions
+        run: flutter --version
+
+      - name: Dépendances
+        run: flutter pub get
+
+      - name: Analyse statique
+        run: flutter analyze
+
+      - name: Tests
+        run: flutter test
+
+      - name: Build web (base-href GitHub Pages)
+        run: >
+          flutter build web --release
+          --base-href "/${{ github.event.repository.name }}/"
+          --pwa-strategy=offline-first
+
+      - name: Configurer Pages
+        uses: actions/configure-pages@v5
+
+      - name: Uploader l'artefact Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: app/build/web
+
+  deploy:
+    name: Déployer sur GitHub Pages
+    needs: build
+    # On ne déploie que sur push vers main (pas sur les PR).
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Déploiement
+        id: deployment
+        uses: actions/deploy-pages@v4

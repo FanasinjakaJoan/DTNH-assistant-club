@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <!--
+    DTNH Assistant Club — point d'entrée Web (PWA offline-first).
+
+    Le `base href` ci-dessous est un marqueur remplacé par `flutter build web`
+    via l'argument `--base-href`. Pour GitHub Pages (dépôt projet), utiliser
+    `--base-href "/DTNH-assistant-club/"` ; pour Vercel/Firebase à la racine,
+    laisser `--base-href "/"`.
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="description" content="Assistant offline-first du club de basket Dream Team New Hope : présences, finances et synchronisation Google Sheets.">
+  <meta name="theme-color" content="#0F172A">
+
+  <!-- iOS : installation sur l'écran d'accueil -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="DTNH">
+  <link rel="apple-touch-icon" href="icons/Icon-180.png">
+
+  <link rel="icon" type="image/png" href="favicon.png"/>
+  <title>DTNH Assistant Club</title>
+  <link rel="manifest" href="manifest.json">
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background-color: #0F172A;
+      overflow: hidden;
+    }
+    /* Écran de chargement affiché pendant l'initialisation du moteur Flutter.
+       Aucune dépendance externe : fonctionne hors-ligne une fois en cache. */
+    #loading {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 22px;
+      background: radial-gradient(circle at 50% 38%, #1E293B 0%, #0F172A 70%);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #F5F7FA;
+      z-index: 9999;
+      transition: opacity .35s ease;
+    }
+    #loading img { width: 96px; height: 96px; }
+    #loading .title { font-size: 20px; font-weight: 700; letter-spacing: .3px; }
+    #loading .subtitle { font-size: 13px; color: #94A3B8; }
+    .spinner {
+      width: 34px; height: 34px;
+      border: 3px solid rgba(249, 115, 22, .25);
+      border-top-color: #F97316;
+      border-radius: 50%;
+      animation: spin .9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="loading">
+    <img src="icons/Icon-192.png" alt="DTNH">
+    <div class="title">DTNH Assistant Club</div>
+    <div class="spinner"></div>
+    <div class="subtitle">Chargement de l'application…</div>
+  </div>
+
+  <noscript>
+    <div style="color:#F5F7FA;font-family:sans-serif;text-align:center;padding:40px;">
+      Cette application nécessite JavaScript. Activez-le pour continuer.
+    </div>
+  </noscript>
+
+  <script>
+    // Retire l'écran de chargement dès que Flutter a rendu sa première frame.
+    window.addEventListener('flutter-first-frame', function () {
+      var loader = document.getElementById('loading');
+      if (loader) {
+        loader.style.opacity = '0';
+        setTimeout(function () { loader.remove(); }, 350);
+      }
+    });
+  </script>
+
+  <!-- Bootstrap Flutter (généré au build : moteur + service worker PWA). -->
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

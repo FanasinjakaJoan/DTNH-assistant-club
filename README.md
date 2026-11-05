@@ -20,6 +20,7 @@ Maquettes visuelles navigables : [`docs/mockups/index.html`](docs/mockups/index.
 
 - [Fonctionnalités](#fonctionnalités)
 - [Démarrage rapide](#démarrage-rapide)
+- [Build, prévisualisation & déploiement (DevOps)](#build-prévisualisation--déploiement-devops)
 - [Configuration Google Sheets (webhook)](#configuration-google-sheets-webhook)
 - [Architecture](#architecture)
 - [Modèles de données](#modèles-de-données)
@@ -69,39 +70,24 @@ Maquettes visuelles navigables : [`docs/mockups/index.html`](docs/mockups/index.
 
 ## Démarrage rapide
 
-```bash
-cd app
-flutter pub get
-flutter run          # Android / iOS
-```
-
-### Plateformes natives (première installation)
-
-Le dépôt ne contient que le code Dart (pas de dossiers `android/` et `ios/`
-versionnés : ils dépendent de la version de Flutter installée). Générez-les une
-fois :
+Prérequis : **Flutter ≥ 3.44 / Dart ≥ 3.12** (voir [`docs/05-DEVOPS.md`](docs/05-DEVOPS.md)).
 
 ```bash
-cd app
-flutter create --platforms=android,ios --project-name dtnh_assistant_club .
-flutter pub get
+bash scripts/doctor.sh     # vérifie Flutter/Dart + flutter doctor
+cd app && flutter pub get
+flutter run                # Android / iOS (appareil ou émulateur)
 ```
 
-Puis, selon la plateforme :
+Les dossiers `app/android/` et `app/web/` sont **versionnés et configurés**
+(permissions réseau, splash et icône DTNH, PWA). Aucune génération manuelle
+n'est requise pour Android et le Web.
 
-- **Android** — ajouter ces permissions dans
-  `android/app/src/main/AndroidManifest.xml` (au-dessus de `<application>`) :
-
-  ```xml
-  <uses-permission android:name="android.permission.INTERNET"/>
-  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
-  ```
-
-- **iOS** — activer la capability *Background Modes → Background fetch* dans
-  Xcode (nécessaire à Workmanager). L'app reste pleinement fonctionnelle sans
-  cette capability : seule la synchronisation en arrière-plan est désactivée,
-  la synchronisation au retour du réseau et le bouton manuel continuent de
-  fonctionner.
+- **Android** — permissions `INTERNET` / `ACCESS_NETWORK_STATE` déjà en place
+  dans `android/app/src/main/AndroidManifest.xml`.
+- **iOS** — non versionné (dépend de macOS/Xcode). Générer avec
+  `bash scripts/setup_platforms.sh`, puis activer la capability *Background
+  Modes → Background fetch* dans Xcode (nécessaire à Workmanager ; l'app reste
+  pleinement fonctionnelle sans, seule la sync en arrière-plan est désactivée).
 
 Au premier lancement :
 
@@ -115,8 +101,33 @@ flutter test          # 4 fichiers de tests (unitaires, intégration Hive, sync)
 flutter analyze       # lints stricts (strict-casts, strict-raw-types)
 ```
 
-Prérequis : Flutter ≥ 3.22, Dart ≥ 3.4. Aucune génération de code
-(`build_runner`) n'est nécessaire : les adapters Hive sont écrits à la main.
+Aucune génération de code (`build_runner`) n'est nécessaire : les adapters Hive
+sont écrits à la main.
+
+---
+
+## Build, prévisualisation & déploiement (DevOps)
+
+Guide complet : **[`docs/05-DEVOPS.md`](docs/05-DEVOPS.md)**. Raccourcis (`make help`) :
+
+| Commande | Effet |
+|---|---|
+| `make doctor` | Vérifie Flutter 3.44+ / Dart 3.12+ |
+| `make web` | Prévisualisation web locale (offline-first, `0.0.0.0:8080`) |
+| `make chrome` | Prévisualisation web dans Chrome (hot reload) |
+| `make build-web` | Build web de production (`app/build/web/`) |
+| `make apk` / `make apk-release` | APK Android debug / release (`dist/`) |
+| `make test` / `make analyze` | Tests + lints |
+
+**Déploiement continu** (GitHub Actions) :
+
+- `deploy.yml` — à chaque push sur `main` : analyze + tests + build web →
+  **GitHub Pages** (`https://<owner>.github.io/DTNH-assistant-club/`).
+- `android-apk.yml` — build **APK** téléchargeable (artefact) ; sur tag `v*`,
+  attaché à la GitHub Release.
+
+Hébergement alternatif : **Vercel** (`config/vercel.json`) et **Firebase
+Hosting** (`firebase.json`) — voir le guide DevOps.
 
 ---
 
@@ -245,10 +256,20 @@ backend avant même de déployer le webhook.
 
 ```
 .
-├── app/            # application Flutter (lib/, test/, pubspec.yaml)
-├── apps-script/    # webhook Google Apps Script (Code.gs, manifest, doc)
-├── docs/           # architecture, data model, protocole de sync, UX
-│   └── mockups/    # maquettes HTML navigables (+ serve.py)
+├── app/                  # application Flutter
+│   ├── lib/ test/        # code Dart + tests
+│   ├── android/          # plateforme Android (versionnée, configurée DTNH)
+│   ├── web/              # plateforme Web (PWA : index.html, manifest, icônes)
+│   └── pubspec.yaml
+├── apps-script/          # webhook Google Apps Script (Code.gs, manifest, doc)
+├── scripts/              # doctor, run_web, build_web, build_apk, setup_platforms
+├── config/               # vercel.json, .firebaserc.example
+├── .github/workflows/    # deploy.yml (Pages) + android-apk.yml (APK)
+├── docs/                 # architecture, data model, sync, UX, DevOps (05)
+│   └── mockups/          # maquettes HTML navigables (+ serve.py)
+├── assets/branding/      # logo / icône source DTNH
+├── firebase.json         # Firebase Hosting
+├── Makefile              # raccourcis (make help)
 └── README.md
 ```
 

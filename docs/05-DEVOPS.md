@@ -1,0 +1,301 @@
+# 05 — DevOps : build, prévisualisation & déploiement
+
+Guide opérationnel pour lancer, compiler et déployer **DTNH Assistant Club**
+(application Flutter offline-first). Toutes les commandes sont exécutables
+telles quelles depuis la racine du dépôt.
+
+> **Version cible : Flutter 3.44+ / Dart 3.12+.** La CI est épinglée sur
+> **Flutter 3.44.9**. Les dossiers `app/android/` et `app/web/` sont versionnés
+> et calés sur cette version (Gradle 9.1.0, AGP 9.0.1, Kotlin 2.3.20, JDK 17).
+
+## Sommaire
+
+1. [Prérequis & `flutter doctor`](#1-prérequis--flutter-doctor)
+2. [Prévisualisation locale Web (offline / CORS)](#2-prévisualisation-locale-web)
+3. [Prévisualisation Android / émulateur](#3-prévisualisation-android--émulateur)
+4. [Build Web de production](#4-build-web-de-production)
+5. [Build APK & distribution interne](#5-build-apk--distribution-interne)
+6. [Déploiement Web (Pages / Vercel / Firebase)](#6-déploiement-web)
+7. [CI/CD GitHub Actions](#7-cicd-github-actions)
+8. [Dépannage](#8-dépannage)
+
+---
+
+## 1. Prérequis & `flutter doctor`
+
+| Outil | Version | Pour quoi |
+|---|---|---|
+| Flutter | **≥ 3.44** (stable) | compiler l'app |
+| Dart | **≥ 3.12** (livré avec Flutter) | langage |
+| JDK | **17** | build Android (APK) |
+| Android SDK | API 36, minSdk 24 | build Android |
+| Chrome | récent | prévisualisation web |
+| Node.js | ≥ 18 | tests du webhook (optionnel) |
+
+Installer Flutter : <https://docs.flutter.dev/get-started/install>
+
+```bash
+# Vérification automatique des versions + flutter doctor détaillé
+bash scripts/doctor.sh
+# ou : make doctor
+
+# Vérification manuelle
+flutter --version          # doit afficher Flutter 3.44.x / Dart 3.12.x
+flutter doctor -v
+```
+
+Si la version est trop ancienne :
+
+```bash
+flutter channel stable
+flutter upgrade
+```
+
+> **Astuce** : `make help` liste tous les raccourcis (`make web`, `make apk`…).
+
+---
+
+## 2. Prévisualisation locale Web
+
+### Commande exacte
+
+```bash
+# Serveur web headless, écoute sur toutes les interfaces (idéal proxy/preview)
+bash scripts/run_web.sh                 # http://0.0.0.0:8080
+# ou : make web
+
+# Ouvrir directement Chrome avec hot reload
+bash scripts/run_web.sh --chrome        # http://localhost:8080
+# ou : make chrome
+
+# Port personnalisé
+PORT=9000 bash scripts/run_web.sh
+```
+
+Équivalent Flutter brut :
+
+```bash
+cd app
+flutter pub get
+flutter run -d web-server --web-hostname 0.0.0.0 --web-port 8080
+# ou : flutter run -d chrome --web-port 8080
+```
+
+### Mode offline & CORS — ce qu'il faut savoir
+
+- **Stockage local (Hive)** : sur le web, Hive utilise **IndexedDB**, qui est
+  *same-origin*. Il n'y a donc **aucune restriction CORS** sur les données
+  locales, et aucun bypass de sécurité navigateur n'est nécessaire. L'app
+  fonctionne **hors-ligne** une fois chargée (PWA + service worker).
+- **Webhook Google Apps Script** : c'est le seul appel *cross-origin*. Un POST
+  `application/json` déclencherait un préflight `OPTIONS` qu'Apps Script ne gère
+  pas. Le client envoie donc le corps en **`text/plain`** sur le web (voir
+  [`app/lib/data/remote/apps_script_client.dart`](../app/lib/data/remote/apps_script_client.dart)),
+  ce qui en fait une requête « simple » sans préflight. Apps Script lit
+  `e.postData.contents` et parse le JSON quel que soit le `Content-Type`.
+- **Compatibilité web du code** : `dart:io` n'existe pas sur le web. La détection
+  de `SocketException` passe par un import conditionnel
+  ([`network_error.dart`](../app/lib/data/remote/network_error.dart)) ;
+  `hive_flutter` bascule déjà sur un stub web. `flutter build web` compile donc
+  sans erreur.
+
+> **Ne pas** lancer Chrome avec `--disable-web-security` : inutile ici, et
+> dangereux. Le correctif `text/plain` est la solution propre.
+
+---
+
+## 3. Prévisualisation Android / émulateur
+
+Le dossier `app/android/` est déjà versionné et configuré (permissions réseau,
+splash DTNH, icône). Aucune génération manuelle n'est requise.
+
+```bash
+cd app
+flutter pub get
+flutter devices                 # lister émulateurs/appareils
+flutter emulators --launch <id> # démarrer un émulateur (ou ouvrir Android Studio)
+flutter run -d <device_id>      # lancer l'app (hot reload)
+```
+
+Prérequis Android : Android Studio (SDK + émulateur) et JDK 17. Vérifier avec
+`flutter doctor`. Sur un téléphone physique, activer le **débogage USB**.
+
+> iOS n'est pas versionné (dépend de macOS/Xcode). Pour l'ajouter :
+> `bash scripts/setup_platforms.sh` (ou `make setup-ios`).
+
+---
+
+## 4. Build Web de production
+
+```bash
+# Base href "/" (Vercel, Firebase, domaine racine)
+bash scripts/build_web.sh
+# ou : make build-web
+
+# Base href "/DTNH-assistant-club/" (GitHub Pages projet)
+BASE_HREF="/DTNH-assistant-club/" bash scripts/build_web.sh
+# ou : make pages-web
+```
+
+Commande Flutter sous-jacente :
+
+```bash
+cd app
+flutter build web --release --base-href "/" --pwa-strategy=offline-first
+```
+
+Résultat : **`app/build/web/`** (statique, prêt à héberger). Le service worker
+PWA précache l'app pour l'usage hors-ligne. Tester le rendu :
+
+```bash
+python3 -m http.server 8090 --directory app/build/web
+# ouvrir http://localhost:8090
+```
+
+> `--base-href` **doit** correspondre au chemin réel de déploiement, sinon les
+> assets ne chargent pas (page blanche). Voir [Dépannage](#8-dépannage).
+
+---
+
+## 5. Build APK & distribution interne
+
+```bash
+bash scripts/build_apk.sh            # debug (rapide, installable)
+bash scripts/build_apk.sh release    # release (signé clé debug, installable)
+bash scripts/build_apk.sh split      # release split-par-ABI (APK plus légers)
+# ou : make apk / make apk-release / make apk-split
+```
+
+Résultat : **`dist/dtnh-assistant-v<version>-<mode>.apk`**.
+
+L'APK *release* est signé avec la **clé debug** (config dans
+[`android/app/build.gradle.kts`](../app/android/app/build.gradle.kts)) : il est
+**immédiatement installable** par le staff, sans keystore à gérer. C'est parfait
+pour la distribution interne.
+
+Installer sur un téléphone :
+
+```bash
+adb install -r dist/dtnh-assistant-v1.0.0-release.apk
+# ou transférer le .apk sur l'appareil et l'ouvrir (autoriser les sources inconnues)
+```
+
+### Pour le Play Store (plus tard) : vraie clé de signature
+
+1. Générer un keystore :
+   ```bash
+   keytool -genkey -v -keystore ~/dtnh-release.jks -keyalg RSA \
+     -keysize 2048 -validity 10000 -alias dtnh
+   ```
+2. Créer `app/android/key.properties` (**ne jamais committer**) :
+   ```properties
+   storePassword=...
+   keyPassword=...
+   keyAlias=dtnh
+   storeFile=/chemin/vers/dtnh-release.jks
+   ```
+3. Charger `key.properties` dans `app/build.gradle.kts` et remplacer
+   `signingConfig = signingConfigs.getByName("debug")` par la config release.
+4. `flutter build appbundle --release` → `build/app/outputs/bundle/release/app-release.aab`.
+
+---
+
+## 6. Déploiement Web
+
+Trois options. **GitHub Pages est recommandé** car entièrement automatisé et
+sans secret à configurer.
+
+### A. GitHub Pages (automatique, recommandé)
+
+1. Dépôt GitHub → **Settings → Pages → Build and deployment → Source =
+   « GitHub Actions »**.
+2. Pousser sur `main` : le workflow [`deploy.yml`](../.github/workflows/deploy.yml)
+   compile et déploie automatiquement.
+3. URL : `https://<owner>.github.io/DTNH-assistant-club/`.
+
+Le `--base-href "/DTNH-assistant-club/"` est calculé automatiquement par la CI.
+
+### B. Vercel
+
+La config [`config/vercel.json`](../config/vercel.json) est copiée dans
+`app/build/web/` par `scripts/build_web.sh` (rewrites SPA + en-têtes cache).
+
+```bash
+# 1) Builder avec base href racine
+bash scripts/build_web.sh
+
+# 2) Déployer le dossier statique (CLI Vercel, https://vercel.com/docs/cli)
+npm i -g vercel
+cd app/build/web
+vercel deploy --prod --yes
+```
+
+> Vercel ne fournit pas Flutter dans son image de build : on déploie donc le
+> **résultat déjà compilé** (`app/build/web`). Pour un déploiement depuis la CI,
+> ajouter un job utilisant `vercel deploy --token=$VERCEL_TOKEN` (secret GitHub).
+
+### C. Firebase Hosting
+
+Config [`firebase.json`](../firebase.json) à la racine (public = `app/build/web`).
+
+```bash
+bash scripts/build_web.sh                 # base href "/"
+npm i -g firebase-tools
+firebase login
+cp config/.firebaserc.example .firebaserc  # puis renseigner le project-id
+firebase deploy --only hosting
+```
+
+---
+
+## 7. CI/CD GitHub Actions
+
+Deux workflows dans [`.github/workflows/`](../.github/workflows/) :
+
+| Fichier | Déclencheur | Action |
+|---|---|---|
+| `deploy.yml` | push `main` (app/**), PR, manuel | analyze + tests + build web → **GitHub Pages** (déploiement sur `main` uniquement) |
+| `android-apk.yml` | push `main`, tag `v*`, manuel | build **APK** → artefact téléchargeable ; sur tag `v*`, attaché à la Release |
+
+- Flutter épinglé : **3.44.9** (`subosito/flutter-action@v2`, cache activé).
+- APK : JDK 17 (`actions/setup-java@v4`).
+- Récupérer un APK : onglet **Actions** → run → **Artifacts** → `dtnh-assistant-apk`.
+- Publier une version : `git tag v1.0.1 && git push origin v1.0.1` → APK release
+  attaché à la GitHub Release.
+
+---
+
+## 8. Dépannage
+
+**Page blanche après déploiement** — le `--base-href` ne correspond pas au
+chemin. GitHub Pages projet → `"/DTNH-assistant-club/"` ; Vercel/Firebase racine
+→ `"/"`. Reconstruire avec la bonne valeur.
+
+**Ancienne version affichée (PWA)** — le service worker a mis l'app en cache.
+Forcer un rechargement (Ctrl+Shift+R), ou dans DevTools → Application → Service
+Workers → *Unregister*, puis recharger. Les en-têtes `no-cache` sur
+`index.html` / `flutter_service_worker.js` (configs Vercel/Firebase) limitent ce
+problème.
+
+**Erreur CORS sur la sync web** — vérifier que l'URL du webhook se termine par
+`/exec` et que le déploiement Apps Script est accessible à « Tout le monde ».
+Le client envoie déjà `text/plain` pour éviter le préflight ; aucun réglage
+navigateur n'est nécessaire.
+
+**`SocketException` / build web échoue sur `dart:io`** — ne pas importer
+`dart:io` directement dans du code compilé pour le web. Utiliser le helper
+conditionnel `network_error.dart` (modèle fourni).
+
+**Gradle / `gradlew` introuvable** — le wrapper Gradle (`gradlew`,
+`gradle-wrapper.jar`) est **injecté automatiquement** par Flutter au premier
+`flutter build apk` / `flutter run`. Ne pas les committer (voir
+`app/android/.gitignore`). `local.properties` (chemin du SDK) est aussi généré
+automatiquement.
+
+**Versions Gradle/AGP** — calées sur Flutter 3.44.9 (Gradle 9.1.0, AGP 9.0.1,
+Kotlin 2.3.20). En cas de montée de version majeure de Flutter, régénérer les
+plateformes avec `scripts/setup_platforms.sh` puis réappliquer les
+personnalisations DTNH (ou `git checkout app/android app/web`).
+
+**`flutter pub get` échoue** — vérifier `flutter --version` ≥ 3.44. Le
+`pubspec.yaml` exige Dart ≥ 3.12 / Flutter ≥ 3.44.

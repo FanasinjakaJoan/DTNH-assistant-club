@@ -46,3 +46,13 @@ secrets.json
 # ---------- Outils de test (Node) ----------
 node_modules/
 package-lock.json
+
+# ---------- Build / distribution ----------
+dist/
+*.apk
+*.aab
+
+# ---------- Hébergement (configs locales, non secrètes mais propres au projet) ----------
+.vercel/
+.firebase/
+.firebaserc

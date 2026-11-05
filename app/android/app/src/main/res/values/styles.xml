@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Thème de la fenêtre Android au démarrage (mode clair). -->
+    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <!-- Splash affiché puis retiré dès que Flutter rend sa 1re frame. -->
+        <item name="android:windowBackground">@drawable/launch_background</item>
+    </style>
+    <!-- Thème appliqué dès le démarrage du process, puis derrière l'UI Flutter. -->
+    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">?android:colorBackground</item>
+    </style>
+</resources>

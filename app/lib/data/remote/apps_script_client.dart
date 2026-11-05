@@ -1,11 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 
 import '../../core/errors/app_exception.dart';
 import '../../domain/entities/sync_queue_item.dart';
+import 'network_error.dart' as net_error;
 
 /// Une entrée du lot envoyé au webhook.
 class SheetBatchEntry {
@@ -171,7 +172,14 @@ class AppsScriptClient {
           .post(
             uri,
             headers: const <String, String>{
-              'Content-Type': 'application/json; charset=utf-8',
+              // Sur le web, `application/json` déclenche un préflight CORS
+              // (OPTIONS) que Google Apps Script ne gère pas. `text/plain` en
+              // fait une requête « simple » (pas de préflight) ; Apps Script lit
+              // `e.postData.contents` et parse le JSON quel que soit le type.
+              // En natif (Android/iOS), pas de CORS : on garde `application/json`.
+              'Content-Type': kIsWeb
+                  ? 'text/plain; charset=utf-8'
+                  : 'application/json; charset=utf-8',
               'Accept': 'application/json',
             },
             body: body,
@@ -219,10 +227,6 @@ class AppsScriptClient {
         'retentée automatiquement.',
         cause: error,
       );
-    } on SocketException catch (error) {
-      throw SyncOfflineException(
-        'Aucune connexion Internet exploitable : ${error.message}.',
-      );
     } on http.ClientException catch (error) {
       throw SyncTransportException(
         'Échec réseau : ${error.message}',
@@ -234,6 +238,18 @@ class AppsScriptClient {
         isRetryable: false,
         cause: error,
       );
+    } catch (error) {
+      // `SocketException` (natif) est détectée via un import conditionnel :
+      // `dart:io` n'existe pas sur le web, où les coupures réseau remontent
+      // déjà via `http.ClientException` ci-dessus. On convertit en
+      // `SyncOfflineException` pour que le moteur déclenche son backoff.
+      if (net_error.isOfflineError(error)) {
+        throw SyncOfflineException(
+          'Aucune connexion Internet exploitable : '
+          '${net_error.offlineErrorMessage(error)}.',
+        );
+      }
+      rethrow;
     }
   }
 
