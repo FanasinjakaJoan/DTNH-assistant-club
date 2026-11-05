@@ -36,7 +36,7 @@ StatusVisual visualForAttendance(AttendanceStatus status) {
         icon: Icons.close_rounded,
         label: 'Absent',
       );
-    case AttendanceStatus.late:
+    case AttendanceStatus.retard:
       return const StatusVisual(
         color: AppColors.amber,
         background: AppColors.amberSoft,

@@ -210,7 +210,13 @@ function doPost(e) {
           continue;
         }
 
-        const values = buildRow_(state.schema, item.data || {}, receivedAt);
+        // L'ID doit toujours atterrir en colonne 1 : c'est la clé
+        // d'idempotence. Si le client l'a omis dans `data`, on le réinjecte
+        // depuis l'item (sinon la déduplication serait silencieusement cassée).
+        const data = Object.assign({}, item.data || {});
+        if (!data.id) data.id = id;
+
+        const values = buildRow_(state.schema, data, receivedAt);
         const existingRow = state.index[id];
 
         if (existingRow) {

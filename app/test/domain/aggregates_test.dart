@@ -9,7 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('AttendanceStats', () {
     test('taux de présence effective = présents + retards', () {
-      const stats = AttendanceStats(present: 8, absent: 2, late: 2, excused: 4);
+      const stats = AttendanceStats(present: 8, absent: 2, lateCount: 2, excused: 4);
       expect(stats.total, 16);
       expect(stats.attended, 10);
       expect(stats.rate, 0.625);
@@ -25,10 +25,10 @@ void main() {
 
     test('merge additionne les statuts', () {
       const a = AttendanceStats(present: 3, absent: 1);
-      const b = AttendanceStats(present: 2, late: 4);
+      const b = AttendanceStats(present: 2, lateCount: 4);
       final merged = a.merge(b);
       expect(merged.present, 5);
-      expect(merged.late, 4);
+      expect(merged.lateCount, 4);
       expect(merged.absent, 1);
       expect(merged.total, 10);
     });
@@ -127,7 +127,7 @@ void main() {
       expect(TeamCategory.tryParse('u16'), TeamCategory.u16);
       expect(TeamCategory.fromCode('U15'), TeamCategory.u14u15);
       expect(AttendanceStatus.fromCode('PRESENT'), AttendanceStatus.present);
-      expect(AttendanceStatus.fromCode('EN RETARD'), AttendanceStatus.late);
+      expect(AttendanceStatus.fromCode('EN RETARD'), AttendanceStatus.retard);
       expect(AttendanceStatus.fromCode('inconnu'), AttendanceStatus.absent);
       expect(PaymentMethod.fromCode('MVOLA'), PaymentMethod.mvola);
       expect(TransactionFlow.fromCode('IN'), TransactionFlow.income);

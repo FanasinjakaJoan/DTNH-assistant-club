@@ -167,3 +167,24 @@ toucher aux données métier.
   une marge très large (un club génère ~200 lignes/semaine).
 - `LockService` sérialise les écritures : deux téléphones qui synchronisent en
   même temps ne peuvent pas se marcher dessus.
+
+## Tester le webhook sans déployer
+
+`apps-script/test/webhook_test.mjs` exécute `Code.gs` dans Node en simulant les
+services Google (Sheet en mémoire, PropertiesService, LockService,
+ContentService). Aucune dépendance npm, aucun compte Google nécessaire :
+
+```bash
+node apps-script/test/webhook_test.mjs
+```
+
+Le harnais vérifie le contrat réel du webhook : `ping`, secret invalide,
+création des en-têtes, upsert idempotent (un rejeu renvoie `duplicate` sans
+ajouter de ligne), mise à jour d'une ligne existante, opération `delete`,
+isolement d'un item invalide, garde-fou `MAX_ITEMS`, journal `_Journal` et
+réinjection de l'ID si le client l'oublie. Sortie code `0`/`1` : utilisable en
+CI avant de redéployer l'Apps Script.
+
+> Ce harnais a déjà détecté un bug réel : un client qui n'envoyait pas `id`
+> dans `data` produisait des lignes sans clé, donc non dédupliquées. `Code.gs`
+> réinjecte désormais l'ID depuis l'item avant construction de la ligne.

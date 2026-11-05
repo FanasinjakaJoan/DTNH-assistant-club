@@ -15,7 +15,7 @@ enum AttendanceStatus {
     shortLabel: 'A',
     countsAsPresent: false,
   ),
-  late(
+  retard(
     code: 'LATE',
     label: 'En retard',
     shortLabel: 'R',
@@ -60,7 +60,7 @@ enum AttendanceStatus {
         return AttendanceStatus.present;
       case 'RETARD':
       case 'EN RETARD':
-        return AttendanceStatus.late;
+        return AttendanceStatus.retard;
       case 'EXCUSÉ':
       case 'EXCUSE':
         return AttendanceStatus.excused;

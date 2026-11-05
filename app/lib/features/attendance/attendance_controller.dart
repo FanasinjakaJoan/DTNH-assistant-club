@@ -42,15 +42,15 @@ class AttendanceDraft {
   AttendanceStats get stats {
     var present = 0;
     var absent = 0;
-    var late = 0;
+    var lateCount = 0;
     var excused = 0;
     for (final status in statuses.values) {
       if (status == AttendanceStatus.present) {
         present++;
       } else if (status == AttendanceStatus.absent) {
         absent++;
-      } else if (status == AttendanceStatus.late) {
-        late++;
+      } else if (status == AttendanceStatus.retard) {
+        lateCount++;
       } else {
         excused++;
       }
@@ -58,7 +58,7 @@ class AttendanceDraft {
     return AttendanceStats(
       present: present,
       absent: absent,
-      late: late,
+      lateCount: lateCount,
       excused: excused,
     );
   }

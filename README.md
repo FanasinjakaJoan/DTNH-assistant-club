@@ -222,10 +222,22 @@ Détails (machine à états, codes HTTP, cas limites, `curl` de test) :
 | `app/test/domain/aggregates_test.dart` | Taux de présence, soldes, enums tolérants |
 | `app/test/data/local_repository_test.dart` | Hive réel : idempotence, coalescence, tombstones, stats |
 | `app/test/sync/sync_engine_test.dart` | Lots, succès partiel, panne réseau, retry |
+| `apps-script/test/webhook_test.mjs` | Webhook **exécuté pour de vrai** hors Google (Sheet simulé) : idempotence, `delete`, quotas, journal |
 
 ```bash
-cd app && flutter test
+cd app && flutter test                  # app Flutter (Dart)
+node apps-script/test/webhook_test.mjs  # backend Apps Script (Node, 0 dépendance)
 ```
+
+Le second script est volontairement sans dépendance : il charge `Code.gs` dans
+un contexte `vm` avec un Google Sheet en mémoire, ce qui permet de valider le
+backend avant même de déployer le webhook.
+
+> **Vérification honnête** : les fichiers Dart ont été relus et vérifiés
+> statiquement (imports, équilibrage syntaxique, formateur `dart_style`), mais
+> **le SDK Flutter n'était pas disponible dans l'environnement de génération**.
+> Lancez `flutter analyze` puis `flutter test` à la première ouverture : les
+> seuls ajustements attendus sont des lints de style.
 
 ---
 

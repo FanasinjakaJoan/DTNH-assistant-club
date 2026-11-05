@@ -364,7 +364,7 @@ class _SessionTile extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '${stats.present} présents · ${stats.late} retards · '
+                      '${stats.present} présents · ${stats.lateCount} retards · '
                       '${stats.absent} absents · ${stats.excused} excusés',
                       style: const TextStyle(
                         fontSize: 11,
@@ -429,7 +429,7 @@ class _SessionTile extends StatelessWidget {
               ),
               DetailRow(
                 label: 'En retard',
-                value: '${session.stats.late}',
+                value: '${session.stats.lateCount}',
                 icon: Icons.schedule_rounded,
                 valueColor: AppColors.amber,
               ),
@@ -593,7 +593,7 @@ class _PlayerStatTile extends StatelessWidget {
                 ),
               ),
               Text(
-                '${stats.present}P · ${stats.late}R · ${stats.absent}A',
+                '${stats.present}P · ${stats.lateCount}R · ${stats.absent}A',
                 style: const TextStyle(
                   fontSize: 9.5,
                   fontWeight: FontWeight.w600,

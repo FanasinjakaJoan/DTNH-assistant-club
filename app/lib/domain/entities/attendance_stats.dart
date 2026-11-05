@@ -6,19 +6,19 @@ class AttendanceStats {
   const AttendanceStats({
     this.present = 0,
     this.absent = 0,
-    this.late = 0,
+    this.lateCount = 0,
     this.excused = 0,
   });
 
   final int present;
   final int absent;
-  final int late;
+  final int lateCount;
   final int excused;
 
-  int get total => present + absent + late + excused;
+  int get total => present + absent + lateCount + excused;
 
   /// Présences effectives (présent + retard).
-  int get attended => present + late;
+  int get attended => present + lateCount;
 
   /// Taux de présence effectif entre 0 et 1.
   double get rate => total == 0 ? 0 : attended / total;
@@ -31,8 +31,8 @@ class AttendanceStats {
         return present;
       case AttendanceStatus.absent:
         return absent;
-      case AttendanceStatus.late:
-        return late;
+      case AttendanceStatus.retard:
+        return lateCount;
       case AttendanceStatus.excused:
         return excused;
     }
@@ -41,13 +41,14 @@ class AttendanceStats {
   AttendanceStats merge(AttendanceStats other) => AttendanceStats(
         present: present + other.present,
         absent: absent + other.absent,
-        late: late + other.late,
+        lateCount: lateCount + other.lateCount,
         excused: excused + other.excused,
       );
 
   @override
   String toString() =>
-      'AttendanceStats(present: $present, absent: $absent, late: $late, '
+      'AttendanceStats(present: $present, absent: $absent, '
+      'late: $lateCount, '
       'excused: $excused)';
 }
 

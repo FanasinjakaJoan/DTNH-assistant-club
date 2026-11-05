@@ -180,15 +180,15 @@ class AttendanceRepositoryImpl implements AttendanceRepository {
   AttendanceStats _statsOf(Iterable<AttendanceEntry> entries) {
     var present = 0;
     var absent = 0;
-    var late = 0;
+    var lateCount = 0;
     var excused = 0;
     for (final entry in entries) {
       if (entry.status == AttendanceStatus.present) {
         present++;
       } else if (entry.status == AttendanceStatus.absent) {
         absent++;
-      } else if (entry.status == AttendanceStatus.late) {
-        late++;
+      } else if (entry.status == AttendanceStatus.retard) {
+        lateCount++;
       } else {
         excused++;
       }
@@ -196,7 +196,7 @@ class AttendanceRepositoryImpl implements AttendanceRepository {
     return AttendanceStats(
       present: present,
       absent: absent,
-      late: late,
+      lateCount: lateCount,
       excused: excused,
     );
   }

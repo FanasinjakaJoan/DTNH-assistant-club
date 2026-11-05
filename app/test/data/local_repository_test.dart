@@ -72,7 +72,7 @@ void main() {
         players: players,
         statuses: {
           'p1': AttendanceStatus.present,
-          'p2': AttendanceStatus.late,
+          'p2': AttendanceStatus.retard,
         },
         authorId: 'coach-1',
         authorName: 'Coach Tojo',
@@ -86,7 +86,7 @@ void main() {
       expect(entries, hasLength(2));
       expect(
         entries.firstWhere((e) => e.playerId == 'p2').status,
-        AttendanceStatus.late,
+        AttendanceStatus.retard,
       );
       expect(entries.every((e) => e.authorName == 'Coach Tojo'), isTrue);
       expect(entries.every((e) => e.syncState == SyncState.pending), isTrue);
@@ -201,7 +201,7 @@ void main() {
         date: sessionDate,
         players: players,
         statuses: {
-          'p1': AttendanceStatus.late,
+          'p1': AttendanceStatus.retard,
           'p2': AttendanceStatus.present,
         },
         authorId: 'coach-1',
