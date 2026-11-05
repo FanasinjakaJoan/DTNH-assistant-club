@@ -248,9 +248,22 @@ backend avant même de déployer le webhook.
 ├── app/            # application Flutter (lib/, test/, pubspec.yaml)
 ├── apps-script/    # webhook Google Apps Script (Code.gs, manifest, doc)
 ├── docs/           # architecture, data model, protocole de sync, UX
-│   └── mockups/    # maquettes HTML navigables
+│   └── mockups/    # maquettes HTML navigables (+ serve.py)
 └── README.md
 ```
+
+### Voir les maquettes tout de suite
+
+Aucun outil n'est nécessaire (pas de Flutter, pas de npm) : un simple serveur
+statique Python affiche les 4 écrans cliquables.
+
+```bash
+python3 docs/mockups/serve.py          # http://localhost:8080
+python3 docs/mockups/serve.py 9000     # autre port
+```
+
+Les maquettes sont servies avec `Cache-Control: no-store` : après une
+modification, un rafraîchissement suffit (aucune version fantôme en cache).
 
 ---
 
