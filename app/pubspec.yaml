@@ -1,0 +1,39 @@
+name: dtnh_assistant_club
+description: >-
+  Assistant intelligent offline-first du club de basket-ball Dream Team New Hope
+  (DTNH) : gestion des présences, des finances et synchronisation Google Sheets.
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # --- State management ---
+  flutter_riverpod: ^2.5.1
+
+  # --- Stockage local embarqué (offline-first) ---
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  path_provider: ^2.1.4
+
+  # --- Connectivité & tâches d'arrière-plan ---
+  connectivity_plus: ^6.0.5
+  workmanager: ^0.5.2
+
+  # --- Réseau / utilitaires ---
+  http: ^1.2.2
+  uuid: ^4.4.2
+  collection: ^1.18.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

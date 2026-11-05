@@ -1,0 +1,44 @@
+# ---------- Flutter / Dart ----------
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+**/doc/api/
+**/generated_plugin_registrant.dart
+*.iml
+*.lock.bak
+
+# iOS / macOS
+**/ios/Flutter/.last_build_id
+**/ios/Pods/
+**/ios/.symlinks/
+**/macos/Pods/
+**/macos/Flutter/ephemeral/
+**/.symlinks/
+
+# Android
+**/android/.gradle/
+**/android/local.properties
+**/android/app/debug/
+**/android/app/profile/
+**/android/app/release/
+**/android/key.properties
+*.jks
+*.keystore
+
+# ---------- Éditeurs / OS ----------
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---------- Secrets locaux ----------
+# Ne jamais committer l'URL/secret du webhook Apps Script :
+# ils se saisissent dans l'app (Réglages > Synchronisation).
+.env
+.env.*
+secrets.json
