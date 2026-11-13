@@ -23,7 +23,7 @@ dependencies:
 
   # --- Connectivité & tâches d'arrière-plan ---
   connectivity_plus: ^6.0.5
-  workmanager: ^0.5.2
+  workmanager: ^0.10.10
 
   # --- Réseau / utilitaires ---
   http: ^1.2.2
