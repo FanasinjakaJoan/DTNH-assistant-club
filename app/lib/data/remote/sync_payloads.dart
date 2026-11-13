@@ -3,12 +3,16 @@ import '../../domain/entities/financial_transaction.dart';
 import '../../domain/entities/player.dart';
 import '../../core/utils/date_x.dart';
 
-/// Mapping **entité -> charge utile JSON nommée** envoyée au webhook.
+/// Mapping **entité -> charge utile JSON nommée** envoyée au serveur.
 ///
-/// Les clés sont stables et doivent correspondre aux `fields` déclarés dans
-/// `apps-script/Code.gs` (section `SCHEMAS`). On n'envoie jamais de tableau
-/// positionnel : l'ordre des colonnes du Sheet peut évoluer sans casser le
-/// client.
+/// Le même payload alimente les deux cibles :
+/// - l'Edge Function Supabase `dtnh-sync` (qui mappe ces clés vers les colonnes
+///   `dtnh_attendance`, `dtnh_transactions`, `dtnh_players`) ;
+/// - le webhook Google Apps Script (section `SCHEMAS` de `apps-script/Code.gs`).
+///
+/// Les clés sont donc **stables** : les renommer casserait l'une des deux
+/// cibles. On n'envoie jamais de tableau positionnel, pour que l'ordre des
+/// colonnes puisse évoluer sans casser le client.
 class SyncPayloads {
   const SyncPayloads._();
 
@@ -25,6 +29,8 @@ class SyncPayloads {
         'numero': entry.jerseyNumber,
         'note': entry.note,
         'updatedAt': entry.updatedAt.toIso8601String(),
+        // Traçabilité (utilisée par Supabase, ignorée par le Sheet).
+        'auteurId': entry.authorId,
       };
 
   static Map<String, dynamic> transaction(FinancialTransaction tx) => {
@@ -41,6 +47,8 @@ class SyncPayloads {
         'evenement': tx.eventName,
         'mois': tx.periodMonth,
         'updatedAt': tx.updatedAt.toIso8601String(),
+        'auteurId': tx.authorId,
+        'createdAt': tx.createdAt.toIso8601String(),
       };
 
   static Map<String, dynamic> player(Player player) => {
@@ -50,6 +58,8 @@ class SyncPayloads {
         'numero': player.jerseyNumber,
         'telephone': player.phone,
         'actif': player.isActive,
+        'createdAt': player.createdAt.toIso8601String(),
+        'updatedAt': player.updatedAt.toIso8601String(),
       };
 
   /// Payload minimal pour une suppression logique (opération `delete`).

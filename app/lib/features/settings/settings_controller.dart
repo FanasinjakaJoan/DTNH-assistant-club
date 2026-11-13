@@ -3,9 +3,10 @@ import 'package:uuid/uuid.dart';
 
 import '../../di/providers.dart';
 import '../../domain/entities/app_settings.dart';
+import '../../domain/enums/sync_target.dart';
 import '../../domain/repositories/settings_repository.dart';
 
-/// État de configuration réactif (webhook, auteur, préférences).
+/// État de configuration réactif (cible de sync, auteur, préférences).
 final settingsProvider =
     NotifierProvider<SettingsController, AppSettings>(SettingsController.new);
 
@@ -23,6 +24,24 @@ class SettingsController extends Notifier<AppSettings> {
     state = next;
   }
 
+  /// Configure l'Edge Function Supabase et bascule la cible sur Supabase.
+  ///
+  /// Laisser les deux champs vides revient à utiliser la configuration
+  /// compilée dans l'application (`AppConfig`) : c'est le cas normal pour le
+  /// staff du club, qui n'a rien à saisir.
+  Future<void> saveSupabase({required String url, required String secret}) =>
+      _persist(
+        state.copyWith(
+          syncTarget: SyncTarget.supabase,
+          supabaseUrl: url.trim(),
+          supabaseSecret: secret.trim(),
+        ),
+      );
+
+  /// Choisit la destination des envois (Supabase ou Google Sheets).
+  Future<void> setSyncTarget(SyncTarget target) =>
+      _persist(state.copyWith(syncTarget: target));
+
   Future<void> saveWebhook({
     required String url,
     required String secret,
@@ -30,6 +49,7 @@ class SettingsController extends Notifier<AppSettings> {
   }) =>
       _persist(
         state.copyWith(
+          syncTarget: SyncTarget.appsScript,
           webhookUrl: url.trim(),
           webhookSecret: secret.trim(),
           sheetId: (sheetId ?? '').trim().isEmpty ? null : sheetId!.trim(),
@@ -37,7 +57,7 @@ class SettingsController extends Notifier<AppSettings> {
       );
 
   /// Définit l'auteur du pointage. L'identifiant reste stable si le nom est
-  /// identique (traçabilité dans le Sheet : colonne `Auteur`).
+  /// identique (traçabilité dans les colonnes `Auteur`).
   Future<void> setAuthor(String name) async {
     final trimmed = name.trim();
     if (trimmed.isEmpty) return;

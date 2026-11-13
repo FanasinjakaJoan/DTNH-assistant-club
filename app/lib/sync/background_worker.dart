@@ -27,7 +27,10 @@ void syncCallbackDispatcher() {
     try {
       db = await LocalDatabase.open();
       final settingsRepository = SettingsRepositoryImpl(db.settingsBox);
-      if (!settingsRepository.current.hasWebhook) return true;
+      // Rien à faire tant qu'aucune cible n'est complète (URL + secret) :
+      // la cible Supabase est pré-configurée au build, Apps Script doit être
+      // renseigné à la main dans les réglages.
+      if (!settingsRepository.current.hasSyncTarget) return true;
 
       final queueRepository =
           SyncQueueRepositoryImpl(dao: SyncQueueDao(db));

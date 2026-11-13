@@ -48,6 +48,7 @@ class SyncScreen extends ConsumerWidget {
             isOnline: runtime.isOnline,
             isSyncing: runtime.isSyncing,
             isConfigured: settings.isConfigured,
+            targetLabel: settings.syncTargetLabel,
             lastSyncAt: settings.lastSyncAt,
             lastError: runtime.lastError ?? settings.lastSyncError,
             pending: counters.outstanding,
@@ -215,13 +216,15 @@ class SyncScreen extends ConsumerWidget {
                   index: '2',
                   text:
                       'Au retour du réseau (ou sur « Synchroniser maintenant »), '
-                      'la file part vers le webhook Google Apps Script.',
+                      'la file part vers la cible active : Edge Function '
+                      'Supabase (PostgreSQL) ou webhook Apps Script (Sheet).',
                 ),
                 _HowItWorksLine(
                   index: '3',
                   text:
-                      'Apps Script insère ou met à jour la ligne dans le Sheet '
-                      'grâce à l\'ID unique, puis confirme chaque item (SYNCED).',
+                      'Le serveur insère ou met à jour la ligne grâce à l\'ID '
+                      'unique (upsert idempotent), puis confirme chaque item '
+                      '(SYNCED).',
                 ),
                 _HowItWorksLine(
                   index: '4',
@@ -243,6 +246,7 @@ class _StatusCard extends StatelessWidget {
     required this.isOnline,
     required this.isSyncing,
     required this.isConfigured,
+    required this.targetLabel,
     required this.lastSyncAt,
     required this.lastError,
     required this.pending,
@@ -252,6 +256,10 @@ class _StatusCard extends StatelessWidget {
   final bool isOnline;
   final bool isSyncing;
   final bool isConfigured;
+
+  /// Libellé de la cible active (Supabase / Google Sheets).
+  final String targetLabel;
+
   final DateTime? lastSyncAt;
   final String? lastError;
   final int pending;
@@ -267,10 +275,10 @@ class _StatusCard extends StatelessWidget {
     if (!isConfigured) {
       accent = AppColors.amber;
       icon = Icons.link_off_rounded;
-      title = 'Webhook non configuré';
+      title = 'Synchronisation non configurée';
       subtitle =
-          'Renseignez l\'URL Apps Script et le secret dans les réglages pour '
-          'activer l\'envoi vers Google Sheets.';
+          'Renseignez l\'URL et le secret de la cible « $targetLabel » dans '
+          'les réglages pour activer l\'envoi des données.';
     } else if (!isOnline) {
       accent = AppColors.amber;
       icon = Icons.cloud_off_rounded;
@@ -293,8 +301,9 @@ class _StatusCard extends StatelessWidget {
       icon = Icons.cloud_done_rounded;
       title = 'Tout est synchronisé';
       subtitle = lastSyncAt == null
-          ? 'Aucune donnée en attente.'
-          : 'Dernier envoi : ${lastSyncAt!.dmy} à ${lastSyncAt!.hm}';
+          ? 'Cible : $targetLabel · aucune donnée en attente.'
+          : 'Cible : $targetLabel · dernier envoi : ${lastSyncAt!.dmy} '
+              'à ${lastSyncAt!.hm}';
     }
 
     return Container(

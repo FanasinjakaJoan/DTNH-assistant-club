@@ -49,10 +49,11 @@ class SyncReport {
 /// Moteur de synchronisation : **outbox + upsert idempotent**.
 ///
 /// Déroulé d'un passage :
-/// 1. lit la configuration (URL du webhook + secret) ;
+/// 1. lit la configuration (cible active, URL, secret) ;
 /// 2. récupère les N items non synchronisés (PENDING / ERROR < maxAttempts) ;
 /// 3. construit un lot hétérogène (présences + transactions + joueurs) ;
-/// 4. POST unique vers Apps Script ;
+/// 4. POST unique vers la **cible active** (Edge Function Supabase ou Apps
+///    Script — même contrat JSON) ;
 /// 5. marque chaque item `SYNCED` ou `ERROR` selon la réponse **par item** ;
 /// 6. propage l'état aux entités (icône dans les listes) et met à jour
 ///    `lastSyncAt`.
@@ -79,23 +80,18 @@ class SyncEngine {
   /// (l'item reste réessayable manuellement depuis l'écran Synchro).
   static const int maxAttempts = 8;
 
-  /// Taille d'un lot : compromise entre latence Apps Script (~1-3 s) et
+  /// Taille d'un lot : compromise entre latence serveur (~1-3 s) et
   /// taille de payload (un pointage de 15 joueurs => 15 items).
   static const int defaultBatchSize = 80;
 
   Future<SyncReport> pushPending({int batchSize = defaultBatchSize}) async {
     final settings = _settings.current;
+    final target = settings.syncTargetLabel;
 
-    if (!settings.hasWebhook) {
-      throw const SyncConfigurationException(
-        'Aucun webhook configuré : renseignez l\'URL Google Apps Script dans '
-        'Réglages > Synchronisation.',
-      );
-    }
-    if (settings.webhookSecret.trim().isEmpty) {
-      throw const SyncConfigurationException(
-        'Secret de synchronisation manquant : il doit être identique à celui '
-        'du Script Property SHARED_SECRET.',
+    if (!settings.hasSyncTarget) {
+      throw SyncConfigurationException(
+        'Synchronisation non configurée : renseignez l\'URL et le secret de '
+        'la cible « $target » dans Réglages > Synchronisation.',
       );
     }
 
@@ -116,8 +112,8 @@ class SyncEngine {
     SheetBatchResponse response;
     try {
       response = await _client.sendBatch(
-        webhookUrl: settings.webhookUrl,
-        secret: settings.webhookSecret,
+        webhookUrl: settings.activeSyncUrl,
+        secret: settings.activeSyncSecret,
         deviceId: settings.deviceId,
         batchId: batchId,
         entries: entries,
@@ -159,14 +155,15 @@ class SyncEngine {
 
     for (final item in items) {
       final result = response.resultFor(item.id);
-      // Un serveur qui répond `ok: true` sans détail est considéré comme
-      // ayant traité tout le lot (compatibilité Apps Script minimaliste).
+      // Un serveur qui répond `ok: true` sans détail (ou sans détail pour cet
+      // item) est considéré comme ayant traité le lot : c'est le comportement
+      // de repli lorsque le serveur ne renvoie pas de résultat par ligne.
       final treated = result?.ok ?? response.ok;
       if (treated) {
         okIds.add(item.id);
         okEntities.putIfAbsent(item.entityType, () => <String>[]).add(item.entityId);
       } else {
-        final message = result?.error ?? 'Ligne refusée par le Sheet';
+        final message = result?.error ?? 'Ligne refusée par le serveur';
         errorMessages.add(message);
         await _queue.markError(
           itemId: item.id,
@@ -199,7 +196,7 @@ class SyncEngine {
 
     if (okIds.isEmpty && items.isNotEmpty) {
       final message = errorMessages.isEmpty
-          ? 'Toutes les lignes ont été refusées par le Sheet.'
+          ? 'Toutes les lignes ont été refusées par le serveur.'
           : errorMessages.first;
       await _settings.recordSyncFailure(message);
       return SyncReport(
@@ -219,8 +216,9 @@ class SyncEngine {
       failed: items.length - okIds.length,
       completedAt: DateTime.now(),
       message: remaining > 0
-          ? '${okIds.length} élément(s) synchronisé(s), $remaining restant(s)'
-          : '${okIds.length} élément(s) synchronisé(s)',
+          ? '${okIds.length} élément(s) synchronisé(s) vers $target, '
+              '$remaining restant(s)'
+          : '${okIds.length} élément(s) synchronisé(s) vers $target',
       remaining: remaining,
     );
   }
@@ -260,7 +258,7 @@ class SyncEngine {
   }
 
   Future<String> testConnection() => _client.ping(
-        webhookUrl: _settings.current.webhookUrl,
-        secret: _settings.current.webhookSecret,
+        webhookUrl: _settings.current.activeSyncUrl,
+        secret: _settings.current.activeSyncSecret,
       );
 }

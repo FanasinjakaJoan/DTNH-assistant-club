@@ -90,11 +90,17 @@ class SheetBatchResponse {
   }
 }
 
-/// Client du webhook Google Apps Script.
+/// Client HTTP des cibles de synchronisation.
 ///
-/// Le webhook reçoit un **lot** JSON et répond un tableau de résultats par
-/// item : le client peut ainsi marquer chaque élément `SYNCED` ou `ERROR`
+/// **Un seul contrat pour deux backends** : l'Edge Function Supabase
+/// (`dtnh-sync` → PostgreSQL) et le webhook Google Apps Script (`/exec` → Sheet)
+/// reçoivent le même lot JSON et répondent un tableau de résultats par item.
+/// Le client peut ainsi marquer chaque élément `SYNCED` ou `ERROR`
 /// individuellement, sans rejouer tout le lot sur une seule erreur de ligne.
+///
+/// Le nom de la classe est conservé pour ne pas casser l'API publique du
+/// package, mais elle ne dépend plus de Google : c'est un simple client de
+/// webhook authentifié par secret partagé.
 class AppsScriptClient {
   AppsScriptClient({
     http.Client? httpClient,
@@ -114,8 +120,9 @@ class AppsScriptClient {
     final uri = Uri.tryParse(webhookUrl.trim());
     if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
       throw const SyncConfigurationException(
-        'URL de webhook invalide. Collez l\'URL /exec du déploiement '
-        'Google Apps Script.',
+        'URL de synchronisation invalide. Attendu : l\'URL de l\'Edge '
+        'Function Supabase (/functions/v1/dtnh-sync) ou l\'URL /exec du '
+        'webhook Apps Script.',
       );
     }
 
@@ -149,7 +156,7 @@ class AppsScriptClient {
   }) async {
     final uri = Uri.tryParse(webhookUrl.trim());
     if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
-      throw const SyncConfigurationException('URL de webhook invalide.');
+      throw const SyncConfigurationException('URL de synchronisation invalide.');
     }
     final body = jsonEncode(<String, dynamic>{
       'action': 'ping',
@@ -159,7 +166,7 @@ class AppsScriptClient {
     final json = await _postJson(uri, body);
     if (json['ok'] != true) {
       throw SyncTransportException(
-        (json['message'] ?? 'Le webhook a répondu par une erreur.').toString(),
+        (json['message'] ?? 'Le serveur a répondu par une erreur.').toString(),
         isRetryable: false,
       );
     }
@@ -173,9 +180,9 @@ class AppsScriptClient {
             uri,
             headers: const <String, String>{
               // Sur le web, `application/json` déclenche un préflight CORS
-              // (OPTIONS) que Google Apps Script ne gère pas. `text/plain` en
-              // fait une requête « simple » (pas de préflight) ; Apps Script lit
-              // `e.postData.contents` et parse le JSON quel que soit le type.
+              // (OPTIONS). `text/plain` en fait une requête « simple » (pas de
+              // préflight) ; Supabase et Apps Script parsent le JSON quel que
+              // soit le type déclaré.
               // En natif (Android/iOS), pas de CORS : on garde `application/json`.
               'Content-Type': kIsWeb
                   ? 'text/plain; charset=utf-8'
@@ -188,15 +195,16 @@ class AppsScriptClient {
 
       if (response.statusCode >= 500) {
         throw SyncTransportException(
-          'Le service Google est momentanément indisponible '
+          'Le serveur de synchronisation est momentanément indisponible '
           '(HTTP ${response.statusCode}).',
           statusCode: response.statusCode,
         );
       }
       if (response.statusCode == 401 || response.statusCode == 403) {
         throw SyncTransportException(
-          'Accès refusé (HTTP ${response.statusCode}). Vérifiez que le '
-          'déploiement Apps Script est bien accessible à « Tout le monde ».',
+          'Accès refusé (HTTP ${response.statusCode}). Vérifiez le secret '
+          'partagé de la cible (Supabase : DTNH_SHARED_SECRET ; Apps Script : '
+          'Script Property SHARED_SECRET).',
           statusCode: response.statusCode,
           isRetryable: false,
         );
@@ -234,7 +242,8 @@ class AppsScriptClient {
       );
     } on FormatException catch (error) {
       throw SyncTransportException(
-        'Le webhook n\'a pas renvoyé de JSON valide. Vérifiez l\'URL /exec.',
+        'Le serveur de synchronisation n\'a pas renvoyé de JSON valide. '
+        'Vérifiez l\'URL configurée.',
         isRetryable: false,
         cause: error,
       );

@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/config/app_config.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/date_x.dart';
 import '../../core/widgets/app_card.dart';
 import '../../core/widgets/common_widgets.dart';
+import '../../core/widgets/install_app_tile.dart';
 import '../../di/providers.dart';
+import '../../domain/entities/app_settings.dart';
+import '../../domain/enums/sync_target.dart';
 import '../sync/sync_controller.dart';
 import 'demo_seed.dart';
 import 'roster_screen.dart';
@@ -23,6 +27,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final TextEditingController _urlController = TextEditingController();
   final TextEditingController _secretController = TextEditingController();
   final TextEditingController _sheetController = TextEditingController();
+  final TextEditingController _supabaseUrlController = TextEditingController();
+  final TextEditingController _supabaseSecretController =
+      TextEditingController();
   bool _initialized = false;
   bool _isSaving = false;
 
@@ -34,6 +41,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _urlController.text = settings.webhookUrl;
     _secretController.text = settings.webhookSecret;
     _sheetController.text = settings.sheetId ?? '';
+    _supabaseUrlController.text = settings.supabaseUrl;
+    _supabaseSecretController.text = settings.supabaseSecret;
     _initialized = true;
   }
 
@@ -42,6 +51,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _urlController.dispose();
     _secretController.dispose();
     _sheetController.dispose();
+    _supabaseUrlController.dispose();
+    _supabaseSecretController.dispose();
     super.dispose();
   }
 
@@ -107,79 +118,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ),
           const SectionHeader(
-            title: 'Webhook Google Apps Script',
-            subtitle: 'Le secret évite tout envoi non autorisé vers le Sheet',
+            title: 'Synchronisation',
+            subtitle: 'Destination des présences, finances et effectif',
           ),
           AppCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                TextField(
-                  controller: _urlController,
-                  keyboardType: TextInputType.url,
-                  autocorrect: false,
-                  decoration: const InputDecoration(
-                    labelText: 'URL du déploiement (/exec)',
-                    hintText:
-                        'https://script.google.com/macros/s/AKfy…/exec',
-                    prefixIcon: Icon(Icons.link_rounded),
+                for (final target in SyncTarget.values)
+                  _SyncTargetTile(
+                    target: target,
+                    selected: settings.syncTarget == target,
+                    onTap: () => ref
+                        .read(settingsProvider.notifier)
+                        .setSyncTarget(target),
                   ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _secretController,
-                  obscureText: true,
-                  autocorrect: false,
-                  decoration: const InputDecoration(
-                    labelText: 'Secret partagé',
-                    hintText: 'Identique à SHARED_SECRET dans Apps Script',
-                    prefixIcon: Icon(Icons.key_rounded),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _sheetController,
-                  autocorrect: false,
-                  decoration: const InputDecoration(
-                    labelText: 'ID du Google Sheet (facultatif)',
-                    hintText: '1AbC… (pour vos archives)',
-                    prefixIcon: Icon(Icons.table_chart_rounded),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                LoadingButton(
-                  label: _isSaving ? 'Enregistrement' : 'Enregistrer la configuration',
-                  icon: Icons.save_rounded,
-                  loading: _isSaving,
-                  onPressed: () => _saveWebhook(context),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () => _testConnection(context),
-                        icon: const Icon(Icons.wifi_tethering_rounded, size: 18),
-                        label: const Text('Tester la connexion'),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                const Text(
-                  'Comment obtenir cette URL : extensions Apps Script, collez le '
-                  'code fourni (dossier apps-script/), puis Déployer > Nouveau '
-                  'déploiement > Application web > Exécuter en tant que moi > '
-                  'Accès : Tout le monde. Copiez l\'URL /exec.',
-                  style: TextStyle(
-                    fontSize: 11,
-                    height: 1.45,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
+                const Divider(height: 20),
+                if (settings.syncTarget == SyncTarget.supabase)
+                  ..._buildSupabaseSection(context, settings)
+                else
+                  ..._buildAppsScriptSection(context, settings),
               ],
             ),
           ),
+          const InstallAppTile(),
           const SectionHeader(title: 'Automatisation'),
           AppCard(
             padding: EdgeInsets.zero,
@@ -379,6 +341,176 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  /// Champs de la cible Supabase.
+  ///
+  /// Les valeurs par défaut sont compilées dans l'application : le staff n'a
+  /// donc rien à saisir. Les champs restent modifiables pour pointer vers un
+  /// autre projet Supabase (utile en test ou pour un autre club).
+  List<Widget> _buildSupabaseSection(
+    BuildContext context,
+    AppSettings settings,
+  ) {
+    final usingDefaults = settings.supabaseUrl.trim().isEmpty;
+    return [
+      Row(
+        children: [
+          const Icon(Icons.cloud_done_rounded, size: 18, color: AppColors.green),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              usingDefaults
+                  ? 'Configuration du club active : rien à saisir.'
+                  : 'Configuration personnalisée enregistrée sur cet appareil.',
+              style: const TextStyle(
+                fontSize: 11.5,
+                height: 1.4,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 12),
+      TextField(
+        controller: _supabaseUrlController,
+        keyboardType: TextInputType.url,
+        autocorrect: false,
+        decoration: const InputDecoration(
+          labelText: 'URL de la fonction (facultatif)',
+          hintText: AppConfig.supabaseSyncUrl,
+          prefixIcon: Icon(Icons.cloud_outlined),
+        ),
+      ),
+      const SizedBox(height: 12),
+      TextField(
+        controller: _supabaseSecretController,
+        obscureText: true,
+        autocorrect: false,
+        decoration: const InputDecoration(
+          labelText: 'Secret partagé (facultatif)',
+          hintText: 'Vide = secret compilé dans l\'application',
+          prefixIcon: Icon(Icons.key_rounded),
+        ),
+      ),
+      const SizedBox(height: 10),
+      const Text(
+        'Les données partent vers PostgreSQL (tables dtnh_*). L\'application '
+        'n\'embarque aucune clé Supabase : seul le secret de la fonction '
+        'dtnh-sync est utilisé.',
+        style: TextStyle(
+          fontSize: 11,
+          height: 1.45,
+          color: AppColors.textSecondary,
+        ),
+      ),
+      const SizedBox(height: 14),
+      LoadingButton(
+        label: _isSaving ? 'Enregistrement' : 'Enregistrer la configuration',
+        icon: Icons.save_rounded,
+        loading: _isSaving,
+        onPressed: () => _saveSupabase(context),
+      ),
+      const SizedBox(height: 8),
+      Row(
+        children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () => _testConnection(context),
+              icon: const Icon(Icons.wifi_tethering_rounded, size: 18),
+              label: const Text('Tester la connexion'),
+            ),
+          ),
+        ],
+      ),
+    ];
+  }
+
+  /// Champs de la cible Google Sheets (webhook Apps Script historique).
+  List<Widget> _buildAppsScriptSection(
+    BuildContext context,
+    AppSettings settings,
+  ) {
+    return [
+      TextField(
+        controller: _urlController,
+        keyboardType: TextInputType.url,
+        autocorrect: false,
+        decoration: const InputDecoration(
+          labelText: 'URL du déploiement (/exec)',
+          hintText: 'https://script.google.com/macros/s/AKfy…/exec',
+          prefixIcon: Icon(Icons.link_rounded),
+        ),
+      ),
+      const SizedBox(height: 12),
+      TextField(
+        controller: _secretController,
+        obscureText: true,
+        autocorrect: false,
+        decoration: const InputDecoration(
+          labelText: 'Secret partagé',
+          hintText: 'Identique à SHARED_SECRET dans Apps Script',
+          prefixIcon: Icon(Icons.key_rounded),
+        ),
+      ),
+      const SizedBox(height: 12),
+      TextField(
+        controller: _sheetController,
+        autocorrect: false,
+        decoration: const InputDecoration(
+          labelText: 'ID du Google Sheet (facultatif)',
+          hintText: '1AbC… (pour vos archives)',
+          prefixIcon: Icon(Icons.table_chart_rounded),
+        ),
+      ),
+      const SizedBox(height: 14),
+      LoadingButton(
+        label: _isSaving ? 'Enregistrement' : 'Enregistrer la configuration',
+        icon: Icons.save_rounded,
+        loading: _isSaving,
+        onPressed: () => _saveWebhook(context),
+      ),
+      const SizedBox(height: 8),
+      Row(
+        children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () => _testConnection(context),
+              icon: const Icon(Icons.wifi_tethering_rounded, size: 18),
+              label: const Text('Tester la connexion'),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 10),
+      const Text(
+        'Comment obtenir cette URL : extensions Apps Script, collez le '
+        'code fourni (dossier apps-script/), puis Déployer > Nouveau '
+        'déploiement > Application web > Exécuter en tant que moi > '
+        'Accès : Tout le monde. Copiez l\'URL /exec.',
+        style: TextStyle(
+          fontSize: 11,
+          height: 1.45,
+          color: AppColors.textSecondary,
+        ),
+      ),
+    ];
+  }
+
+  Future<void> _saveSupabase(BuildContext context) async {
+    setState(() => _isSaving = true);
+    await ref.read(settingsProvider.notifier).saveSupabase(
+          url: _supabaseUrlController.text,
+          secret: _supabaseSecretController.text,
+        );
+    if (!mounted) return;
+    setState(() => _isSaving = false);
+    showAppSnack(
+      context,
+      'Synchronisation Supabase enregistrée sur cet appareil.',
+      icon: Icons.check_circle_rounded,
+    );
+  }
+
   Future<void> _saveWebhook(BuildContext context) async {
     setState(() => _isSaving = true);
     await ref.read(settingsProvider.notifier).saveWebhook(
@@ -396,17 +528,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _testConnection(BuildContext context) async {
-    await ref.read(settingsProvider.notifier).saveWebhook(
-          url: _urlController.text,
-          secret: _secretController.text,
-          sheetId: _sheetController.text,
-        );
+    // On enregistre d'abord les champs de la cible active : tester une
+    // configuration non sauvegardée donnerait un faux négatif.
+    final current = ref.read(settingsProvider);
+    if (current.syncTarget == SyncTarget.supabase) {
+      await ref.read(settingsProvider.notifier).saveSupabase(
+            url: _supabaseUrlController.text,
+            secret: _supabaseSecretController.text,
+          );
+    } else {
+      await ref.read(settingsProvider.notifier).saveWebhook(
+            url: _urlController.text,
+            secret: _secretController.text,
+            sheetId: _sheetController.text,
+          );
+    }
     try {
       final message = await ref.read(syncControllerProvider.notifier).testConnection();
       if (!mounted) return;
       showAppSnack(
         context,
-        'Webhook opérationnel : $message',
+        'Connexion établie : $message',
         icon: Icons.wifi_tethering_rounded,
       );
     } catch (error) {
@@ -502,5 +644,68 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
     return (parts.first.substring(0, 1) + parts.last.substring(0, 1))
         .toUpperCase();
+  }
+}
+
+/// Ligne de sélection de la cible de synchronisation.
+///
+/// Réimplémentée à la main plutôt qu'avec `RadioListTile` : l'API `groupValue`
+/// / `onChanged` de Flutter est dépréciée depuis 3.32 et deviendra caduque.
+class _SyncTargetTile extends StatelessWidget {
+  const _SyncTargetTile({
+    required this.target,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final SyncTarget target;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = selected ? AppColors.orange : AppColors.textMuted;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+        child: Row(
+          children: [
+            Icon(
+              selected
+                  ? Icons.radio_button_checked_rounded
+                  : Icons.radio_button_off_rounded,
+              size: 20,
+              color: accent,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    target.label,
+                    style: TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w700,
+                      color: selected ? AppColors.textPrimary : AppColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    target.description,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

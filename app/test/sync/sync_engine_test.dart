@@ -14,6 +14,7 @@ import 'package:dtnh_assistant_club/domain/entities/attendance_entry.dart';
 import 'package:dtnh_assistant_club/domain/entities/player.dart';
 import 'package:dtnh_assistant_club/domain/enums/attendance_status.dart';
 import 'package:dtnh_assistant_club/domain/enums/sync_enums.dart';
+import 'package:dtnh_assistant_club/domain/enums/sync_target.dart';
 import 'package:dtnh_assistant_club/domain/enums/team_category.dart';
 import 'package:dtnh_assistant_club/domain/repositories/settings_repository.dart';
 import 'package:dtnh_assistant_club/sync/sync_engine.dart';
@@ -63,6 +64,9 @@ class _FakeSettingsRepository implements SettingsRepository {
 }
 
 const _configuredSettings = AppSettings(
+  // Cible explicite : sinon ce sont les valeurs compilées (Supabase) qui
+  // s'appliquent, et le test ne contrôlerait plus l'URL envoyée.
+  syncTarget: SyncTarget.appsScript,
   webhookUrl: 'https://script.google.com/macros/s/ABC/exec',
   webhookSecret: 'secret-123',
   deviceId: 'device-1',
@@ -112,8 +116,33 @@ void main() {
       expect(payload['auteur'], 'Coach Tojo');
       expect(payload['heure'], '08:45');
       expect(payload['numero'], 3);
+      // Traçabilité Supabase (colonne author_id).
+      expect(payload['auteurId'], 'coach-1');
+      expect(payload['sessionId'], 'session-1');
       // Le SyncTimestamp est généré côté serveur : le client ne l'envoie pas.
       expect(payload.containsKey('syncTimestamp'), isFalse);
+    });
+
+    test('expose les clés attendues pour les joueurs', () {
+      final player = Player(
+        id: 'p1',
+        fullName: 'Rasoa Miora',
+        category: TeamCategory.u14u15,
+        jerseyNumber: 7,
+        phone: '0340000000',
+        createdAt: DateTime(2026, 11, 5),
+        updatedAt: DateTime(2026, 11, 5),
+      );
+
+      final payload = SyncPayloads.player(player);
+
+      expect(payload['id'], 'p1');
+      expect(payload['nom'], 'Rasoa Miora');
+      expect(payload['categorie'], 'U14-U15');
+      expect(payload['numero'], 7);
+      expect(payload['telephone'], '0340000000');
+      expect(payload['actif'], isTrue);
+      expect(payload['updatedAt'], isA<String>());
     });
   });
 
@@ -162,11 +191,14 @@ void main() {
       );
     }
 
-    test('refuse de synchroniser sans webhook configuré', () async {
+    test('refuse de synchroniser sans cible configurée', () async {
       final engine = SyncEngine(
         queue: queue,
         client: AppsScriptClient(),
-        settings: _FakeSettingsRepository(const AppSettings()),
+        // Cible Apps Script sans URL : configuration incomplète.
+        settings: _FakeSettingsRepository(
+          const AppSettings(syncTarget: SyncTarget.appsScript),
+        ),
       );
 
       await expectLater(

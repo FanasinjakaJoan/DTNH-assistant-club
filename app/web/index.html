@@ -90,6 +90,87 @@
     });
   </script>
 
+  <script>
+    /*
+      Passerelle d'installation PWA.
+
+      Le navigateur n'émet `beforeinstallprompt` qu'une seule fois, et
+      uniquement avant l'interaction utilisateur. On l'intercepte donc ici
+      (avant le démarrage de Flutter) pour pouvoir le rejouer plus tard depuis
+      le bouton « Installer l'application » de l'écran Réglages.
+
+      Ce script est l'unique source de vérité côté navigateur. Dart y accède
+      directement avec `dart:js_interop` (voir
+      `lib/core/platform/install_prompt_web.dart`), donc sans package externe
+      et sans canal de plateforme : un MethodChannel ne peut pas être branché
+      depuis du JavaScript arbitraire sur Flutter Web.
+    */
+    (function () {
+      // Prompt différé fourni par le navigateur (null tant qu'il n'a pas été
+      // émis, ou après consommation).
+      var deferredPrompt = null;
+
+      // L'objet est défini **avant** les listeners : `beforeinstallprompt`
+      // peut se déclencher dès le chargement du document.
+      window.dtnhInstall = {
+        available: false,
+
+        /** Contexte d'exécution : installed | android | ios | desktop. */
+        detect: function () {
+          var standalone =
+            window.matchMedia('(display-mode: standalone)').matches ||
+            window.matchMedia('(display-mode: fullscreen)').matches ||
+            window.navigator.standalone === true;
+          if (standalone) return 'installed';
+
+          var ua = window.navigator.userAgent || '';
+          if (/Android/i.test(ua)) return 'android';
+          if (/iPhone|iPad|iPod/i.test(ua)) return 'ios';
+
+          // iPadOS 13+ se présente comme un Mac : on affine avec le tactile.
+          if (/Macintosh/i.test(ua) && window.navigator.maxTouchPoints > 1) {
+            return 'ios';
+          }
+          return 'desktop';
+        },
+
+        canPrompt: function () {
+          return deferredPrompt !== null;
+        },
+
+        /** Rejoue le prompt natif. Renvoie true si l'utilisateur accepte. */
+        prompt: function () {
+          if (!deferredPrompt) return Promise.resolve(null);
+          var event = deferredPrompt;
+          deferredPrompt = null;
+          window.dtnhInstall.available = false;
+          event.prompt();
+          return event.userChoice.then(function (choice) {
+            return !!(choice && choice.outcome === 'accepted');
+          });
+        },
+
+        openUrl: function (url) {
+          if (!url) return;
+          window.open(url, '_blank', 'noopener,noreferrer');
+        },
+      };
+
+      window.addEventListener('beforeinstallprompt', function (event) {
+        // Empêche la mini-infobar de Chrome : on garde la main sur le moment
+        // où l'installation est proposée (bouton dans les réglages).
+        event.preventDefault();
+        deferredPrompt = event;
+        window.dtnhInstall.available = true;
+      });
+
+      window.addEventListener('appinstalled', function () {
+        deferredPrompt = null;
+        window.dtnhInstall.available = false;
+      });
+    })();
+  </script>
+
   <!-- Bootstrap Flutter (généré au build : moteur + service worker PWA). -->
   <script src="flutter_bootstrap.js" async></script>
 </body>

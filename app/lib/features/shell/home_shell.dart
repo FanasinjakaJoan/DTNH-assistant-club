@@ -7,6 +7,7 @@ import '../../di/providers.dart';
 import '../attendance/attendance_screen.dart';
 import '../finance/finance_screen.dart';
 import '../history/history_screen.dart';
+import '../settings/settings_controller.dart';
 import '../sync/sync_controller.dart';
 import '../sync/sync_screen.dart';
 
@@ -43,7 +44,8 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       if (report.isSuccess) {
         showAppSnack(
           context,
-          '${report.succeeded} élément(s) synchronisé(s) avec Google Sheets.',
+          '${report.succeeded} élément(s) synchronisé(s) avec '
+          '${ref.read(settingsProvider).syncTargetLabel}.',
           icon: Icons.cloud_done_rounded,
           duration: const Duration(seconds: 3),
         );

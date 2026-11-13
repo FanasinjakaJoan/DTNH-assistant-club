@@ -4,6 +4,7 @@ import 'package:hive/hive.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../domain/entities/app_settings.dart';
+import '../../domain/enums/sync_target.dart';
 import '../../domain/repositories/settings_repository.dart';
 
 /// Implémentation Hive de la configuration locale (box `settings_v1`).
@@ -22,6 +23,9 @@ class SettingsRepositoryImpl implements SettingsRepository {
   final StreamController<AppSettings> _controller =
       StreamController<AppSettings>.broadcast();
 
+  static const String _kSyncTarget = 'sync_target';
+  static const String _kSupabaseUrl = 'supabase_url';
+  static const String _kSupabaseSecret = 'supabase_secret';
   static const String _kWebhookUrl = 'webhook_url';
   static const String _kWebhookSecret = 'webhook_secret';
   static const String _kDeviceId = 'device_id';
@@ -44,6 +48,9 @@ class SettingsRepositoryImpl implements SettingsRepository {
   @override
   Future<void> save(AppSettings settings) async {
     await _box.putAll(<String, dynamic>{
+      _kSyncTarget: settings.syncTarget.code,
+      _kSupabaseUrl: settings.supabaseUrl.trim(),
+      _kSupabaseSecret: settings.supabaseSecret.trim(),
       _kWebhookUrl: settings.webhookUrl.trim(),
       _kWebhookSecret: settings.webhookSecret.trim(),
       _kDeviceId: _ensureDeviceId(),
@@ -67,6 +74,23 @@ class SettingsRepositoryImpl implements SettingsRepository {
     required String secret,
   }) =>
       save(current.copyWith(webhookUrl: url, webhookSecret: secret));
+
+  @override
+  Future<void> updateSupabase({
+    required String url,
+    required String secret,
+  }) =>
+      save(
+        current.copyWith(
+          syncTarget: SyncTarget.supabase,
+          supabaseUrl: url,
+          supabaseSecret: secret,
+        ),
+      );
+
+  @override
+  Future<void> updateSyncTarget(SyncTarget target) =>
+      save(current.copyWith(syncTarget: target));
 
   @override
   Future<void> recordSyncSuccess(DateTime at) => save(
@@ -93,6 +117,9 @@ class SettingsRepositoryImpl implements SettingsRepository {
     final lastSyncRaw = _box.get(_kLastSyncAt) as String?;
 
     return AppSettings(
+      syncTarget: SyncTarget.fromCode(_box.get(_kSyncTarget) as String?),
+      supabaseUrl: (_box.get(_kSupabaseUrl) as String?) ?? '',
+      supabaseSecret: (_box.get(_kSupabaseSecret) as String?) ?? '',
       webhookUrl: (_box.get(_kWebhookUrl) as String?) ?? '',
       webhookSecret: (_box.get(_kWebhookSecret) as String?) ?? '',
       deviceId: _ensureDeviceId(),
