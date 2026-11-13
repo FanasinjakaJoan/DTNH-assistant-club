@@ -52,6 +52,8 @@ jobs:
     defaults:
       run:
         working-directory: app
+    outputs:
+      pages_enabled: ${{ steps.pages.outputs.enabled }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -99,10 +101,31 @@ jobs:
           --dart-define=DTNH_APK_URL="$DTNH_APK_URL"
           --dart-define=DTNH_WEB_URL="$DTNH_WEB_URL"
 
+      - name: Vérifier l'activation de GitHub Pages
+        # GitHub Pages doit être activé une seule fois par un administrateur :
+        # Settings > Pages > Source = « GitHub Actions ». Sans cela,
+        # `configure-pages` échoue en 404 et fait tomber tout le workflow.
+        # On détecte ce cas pour continuer (les tests + build web restent
+        # validés, l'app est de toute façon servie par Vercel) au lieu de
+        # produire un échec trompeur.
+        id: pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/${{ github.repository }}/pages" > /dev/null 2>&1; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "GitHub Pages activé : le site sera publié."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::GitHub Pages n'est pas activé (Settings > Pages > Source = GitHub Actions). Déploiement Pages ignoré ; l'application reste publiée par Vercel."
+          fi
+
       - name: Configurer Pages
+        if: steps.pages.outputs.enabled == 'true'
         uses: actions/configure-pages@v5
 
       - name: Uploader l'artefact Pages
+        if: steps.pages.outputs.enabled == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: app/build/web
@@ -110,8 +133,12 @@ jobs:
   deploy:
     name: Déployer sur GitHub Pages
     needs: build
-    # On ne déploie que sur push vers main (pas sur les PR).
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # On ne déploie que sur push vers main (pas sur les PR), et uniquement si
+    # GitHub Pages est activé sur le dépôt (sinon Vercel assure la publication).
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.build.outputs.pages_enabled == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
