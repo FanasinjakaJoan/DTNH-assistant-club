@@ -71,11 +71,16 @@ jobs:
 
       - name: Analyse statique
         # `--no-fatal-infos --no-fatal-warnings` : seules les *erreurs* bloquent
-        # la CI. Le dépôt conserve une dette de lints historiques (API dépréciée
-        # Color.withOpacity, préférences de style) qui n'affecte pas le
-        # comportement de l'application ; la compilation est de toute façon
-        # vérifiée par l'étape « Build web » ci-dessous.
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+        # la CI. Les diagnostics sont aussi republiés en annotations : ils
+        # restent lisibles dans l'onglet Checks sans ouvrir le journal du job.
+        run: |
+          set +e
+          flutter analyze --no-fatal-infos --no-fatal-warnings > /tmp/analyze.txt 2>&1
+          status=$?
+          awk '/^[[:space:]]*error[[:space:]]/ {print}' /tmp/analyze.txt | head -25 |
+            while IFS= read -r line; do echo "::error::$line"; done
+          tail -5 /tmp/analyze.txt
+          exit $status
 
       - name: Tests
         run: flutter test
