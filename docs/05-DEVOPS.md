@@ -387,5 +387,15 @@ Kotlin 2.3.20). En cas de montée de version majeure de Flutter, régénérer le
 plateformes avec `scripts/setup_platforms.sh` puis réappliquer les
 personnalisations DTNH (ou `git checkout app/android app/web`).
 
+**Build APK en échec sur `:workmanager:compileDebugKotlin`** — la version du
+plugin `workmanager` doit suivre le toolchain Kotlin. Flutter 3.44.9 embarque
+Kotlin 2.3.20 / AGP 9.0.1 : `workmanager` **≥ 0.10.0** est requis (la 0.5.x ne
+compile plus). Vérifier `app/pubspec.yaml` avant toute montée de version.
+
+**Build APK en échec sur la mémoire JVM** — `app/android/gradle.properties` fixe
+`-Xmx4G` : le modèle Flutter par défaut (`-Xmx8G`) dépasse la RAM des runners
+GitHub Actions et des petites machines (« Could not reserve enough space for
+object heap »).
+
 **`flutter pub get` échoue** — vérifier `flutter --version` ≥ 3.44. Le
 `pubspec.yaml` exige Dart ≥ 3.12 / Flutter ≥ 3.44.
