@@ -49,6 +49,23 @@ class _FakeSettingsRepository implements SettingsRepository {
   }
 
   @override
+  Future<void> updateSupabase({
+    required String url,
+    required String secret,
+  }) async {
+    _settings = _settings.copyWith(
+      syncTarget: SyncTarget.supabase,
+      supabaseUrl: url,
+      supabaseSecret: secret,
+    );
+  }
+
+  @override
+  Future<void> updateSyncTarget(SyncTarget target) async {
+    _settings = _settings.copyWith(syncTarget: target);
+  }
+
+  @override
   Future<void> recordSyncSuccess(DateTime at) async {
     _settings = _settings.copyWith(lastSyncAt: at, clearLastSyncError: true);
     lastError = null;
