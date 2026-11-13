@@ -17,7 +17,9 @@ telles quelles depuis la racine du dépôt.
 5. [Build APK & distribution interne](#5-build-apk--distribution-interne)
 6. [Déploiement Web (Pages / Vercel / Firebase)](#6-déploiement-web)
 7. [CI/CD GitHub Actions](#7-cicd-github-actions)
-8. [Dépannage](#8-dépannage)
+8. [Synchronisation Supabase](#8-synchronisation-supabase)
+9. [Installer l'application (PWA / APK)](#9-installer-lapplication-pwa--apk)
+10. [Dépannage](#10-dépannage)
 
 ---
 
@@ -265,7 +267,95 @@ Deux workflows dans [`.github/workflows/`](../.github/workflows/) :
 
 ---
 
-## 8. Dépannage
+## 8. Synchronisation Supabase
+
+Depuis la version 1.1, la cible de synchronisation par défaut est **Supabase
+(PostgreSQL)**, avec Google Sheets toujours disponible en second choix (voir
+Réglages > Synchronisation dans l'application).
+
+### 8.1 Ce qui existe côté serveur
+
+| Objet | Rôle |
+| --- | --- |
+| `dtnh_players` | effectif (nom, catégorie, numéro, téléphone, actif) |
+| `dtnh_attendance` | une ligne par joueur et par séance |
+| `dtnh_transactions` | mouvements financiers (montants en Ariary entiers) |
+| `dtnh_sync_log` | journal des lots reçus (diagnostic « le téléphone a-t-il envoyé ? ») |
+| `dtnh_finance_summary` | vue : entrées/sorties/solde par mois |
+| `dtnh_attendance_summary` | vue : présents/absents/excusés par séance |
+| Edge Function `dtnh-sync` | endpoint HTTPS appelé par l'application |
+
+Le schéma complet (rejouable à l'identique) est versionné dans
+`supabase/migrations/20261105000000_dtnh_sync_schema.sql`.
+
+**Sécurité** : la RLS est activée **sans aucune policy**. La clé `anon` ne peut
+ni lire ni écrire ; seule la clé `service_role` (utilisée par l'Edge Function)
+a accès. L'application mobile/web **n'embarque aucune clé Supabase** : elle
+présente un simple secret partagé (`DTNH_SHARED_SECRET`) à la fonction, exactement
+comme le `SHARED_SECRET` d'Apps Script.
+
+### 8.2 Vérifier que la synchronisation fonctionne
+
+Dans l'application : **Réglages > Synchronisation** doit afficher
+« Configuration du club active : rien à saisir. », puis
+**Tester la connexion** doit répondre « Supabase connecté (DTNH). ».
+
+En SQL (Dashboard Supabase > SQL Editor) :
+
+```sql
+-- Derniers lots reçus
+select batch_id, device_id, item_count, received_at
+from dtnh_sync_log order by received_at desc limit 10;
+
+-- Totaux financiers du club
+select * from dtnh_finance_summary;
+```
+
+### 8.3 Regénérer le secret (si fuite ou changement d'équipe)
+
+```bash
+# 1) nouveau secret
+openssl rand -hex 24
+
+# 2) côté Supabase : Project Settings > Edge Functions > Secrets
+#    mettre à jour DTNH_SHARED_SECRET (ou via l'outil de gestion des secrets)
+
+# 3) côté application : rebuild avec la nouvelle valeur
+flutter build web --release \
+  --dart-define=DTNH_SUPABASE_SECRET="<nouveau secret>"
+```
+
+Les téléphones déjà installés continuent de fonctionner hors-ligne ; ils
+reprendront l'envoi après mise à jour de l'application (ou saisie du secret
+dans Réglages, qui surcharge la valeur compilée).
+
+---
+
+## 9. Installer l'application (PWA / APK)
+
+Trois façons d'installer, aucune ne nécessite de store :
+
+1. **Android, navigateur Chrome/Edge** — Réglages > « Installer l'application »
+   déclenche le prompt natif (`beforeinstallprompt`, capturé dans
+   `app/web/index.html`).
+2. **iPhone/iPad, Safari** — la carte affiche les 3 gestes
+   (Partager → Sur l'écran d'accueil → Ajouter).
+3. **APK Android** — bouton « Télécharger l'application Android (APK) » qui
+   pointe vers `DTNH_APK_URL` (par défaut : dernière release GitHub).
+
+L'URL de l'APK est configurable au build :
+
+```bash
+flutter build web --release \
+  --dart-define=DTNH_APK_URL="https://github.com/<owner>/<repo>/releases/latest"
+```
+
+Pour produire un APK publiable (workflow `android-apk.yml`, déclenché par un
+tag `v*`), voir la section 5.
+
+---
+
+## 10. Dépannage
 
 **Page blanche après déploiement** — le `--base-href` ne correspond pas au
 chemin. GitHub Pages projet → `"/DTNH-assistant-club/"` ; Vercel/Firebase racine

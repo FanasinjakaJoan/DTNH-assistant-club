@@ -6,7 +6,8 @@ aux administrateurs.
 
 > **Le principe** : au bord du terrain, il n'y a pas de réseau. Le pointage et la
 > caisse doivent fonctionner **immédiatement**, sans spinner, sans perte. La
-> synchronisation vers Google Sheets est un effet de bord, jamais un prérequis.
+> synchronisation (Supabase ou Google Sheets) est un effet de bord, jamais un
+> prérequis.
 
 | Présences | Finances | Historique | Synchronisation |
 |---|---|---|---|
@@ -21,7 +22,7 @@ Maquettes visuelles navigables : [`docs/mockups/index.html`](docs/mockups/index.
 - [Fonctionnalités](#fonctionnalités)
 - [Démarrage rapide](#démarrage-rapide)
 - [Build, prévisualisation & déploiement (DevOps)](#build-prévisualisation--déploiement-devops)
-- [Configuration Google Sheets (webhook)](#configuration-google-sheets-webhook)
+- [Synchronisation (Supabase / Google Sheets)](#synchronisation-supabase--google-sheets)
 - [Architecture](#architecture)
 - [Modèles de données](#modèles-de-données)
 - [Moteur de synchronisation](#moteur-de-synchronisation)
@@ -56,13 +57,15 @@ Maquettes visuelles navigables : [`docs/mockups/index.html`](docs/mockups/index.
   répartition par motif, derniers mouvements.
 - Montants en **Ariary entiers** (aucun flottant, donc aucun arrondi faux).
 
-### C. Moteur de synchronisation (Google Sheets)
+### C. Moteur de synchronisation (Supabase ou Google Sheets)
 
 - Écriture locale immédiate (Hive), puis **file d'attente** `PENDING` / `SYNCED` / `ERROR`.
 - Synchronisation **automatique** au retour du réseau (`connectivity_plus` +
   debounce), **périodique** (Workmanager, 15 min) et **manuelle**.
-- Envoi par **lot JSON** vers un **webhook Google Apps Script** (pas de clé OAuth
-  dans l'app), avec **upsert idempotent** par ID et **résultat par ligne**.
+- Envoi par **lot JSON** vers la cible choisie : **Edge Function Supabase**
+  (PostgreSQL, par défaut) ou **webhook Google Apps Script** (Sheet). Même
+  contrat, **upsert idempotent** par ID et **résultat par ligne**. Aucune clé
+  OAuth ni clé Supabase n'est embarquée : seul un secret partagé est présenté.
 - Écran Synchro : compteurs, file détaillée, messages d'erreur, réessai individuel
   ou global.
 
@@ -94,7 +97,8 @@ Au premier lancement :
 1. saisir votre nom (auteur du pointage) — option « pré-remplir l'effectif de
    démonstration » (40 joueurs répartis dans les 4 catégories) ;
 2. l'application est **immédiatement utilisable hors-ligne** ;
-3. pour activer Google Sheets, suivre la section suivante.
+3. la synchronisation Supabase est déjà pré-configurée (`AppConfig`) : rien à
+   saisir. Pour utiliser Google Sheets à la place, suivre la section suivante.
 
 ```bash
 flutter test          # 4 fichiers de tests (unitaires, intégration Hive, sync)
@@ -126,12 +130,30 @@ Guide complet : **[`docs/05-DEVOPS.md`](docs/05-DEVOPS.md)**. Raccourcis (`make 
 - `android-apk.yml` — build **APK** téléchargeable (artefact) ; sur tag `v*`,
   attaché à la GitHub Release.
 
-Hébergement alternatif : **Vercel** (`config/vercel.json`) et **Firebase
+**Vercel** est déjà branché (intégration Git) : chaque push sur la branche
+déploie une preview, et `vercel.json` + `scripts/vercel_build.sh` compilent
+l'app web dans le conteneur Vercel. Hébergement alternatif : **Firebase
 Hosting** (`firebase.json`) — voir le guide DevOps.
 
 ---
 
-## Configuration Google Sheets (webhook)
+## Synchronisation (Supabase / Google Sheets)
+
+### A. Supabase — cible par défaut, zéro configuration
+
+1. Le schéma est déjà déployé (tables `dtnh_players`, `dtnh_attendance`,
+   `dtnh_transactions`, journal `dtnh_sync_log`, 2 vues d'agrégation). Version
+   SQL rejouable : [`supabase/migrations/20261105000000_dtnh_sync_schema.sql`](supabase/migrations/20261105000000_dtnh_sync_schema.sql).
+2. L'Edge Function **`dtnh-sync`** reçoit les lots et écrit en PostgreSQL.
+3. L'application pointe dessus automatiquement (`lib/core/config/app_config.dart`).
+   **Réglages → Synchronisation → Tester la connexion** doit répondre
+   « Supabase connecté (DTNH). ».
+
+Sécurité : RLS activée **sans policy** (la clé `anon` ne voit rien), seule la
+clé `service_role` de la fonction écrit. Détails et regénération du secret :
+[`docs/05-DEVOPS.md` § 8](docs/05-DEVOPS.md#8-synchronisation-supabase).
+
+### B. Google Sheets — cible alternative (webhook Apps Script)
 
 1. Ouvrir le Google Sheet du club → **Extensions → Apps Script**.
 2. Coller [`apps-script/Code.gs`](apps-script/Code.gs) (et
@@ -140,19 +162,18 @@ Hosting** (`firebase.json`) — voir le guide DevOps.
    `Transactions`, `Joueurs`, `_Journal` et génère le **secret partagé**.
 4. **Déployer → Nouveau déploiement → Application web**
    (Exécuter en tant que : *Moi*, Accès : *Tout le monde*) → copier l'URL `/exec`.
-5. Dans l'app : **Synchro → ⚙ Réglages → Webhook Google Apps Script** :
-   coller l'URL + le secret, puis **Tester la connexion**.
+5. Dans l'app : **Réglages → Synchronisation → Google Sheets**, coller l'URL +
+   le secret, puis **Tester la connexion**.
 
-Détails, contrat d'API complet et cas limites : [`docs/03-SYNC-PROTOCOL.md`](docs/03-SYNC-PROTOCOL.md)
-et [`apps-script/README.md`](apps-script/README.md).
+---
 
-Structure cible des onglets (colonnes obligatoires en gras, les suivantes sont
-des colonnes de traçabilité ajoutées en fin de tableau) :
+## Installer l'application
 
-| Onglet | Colonnes |
-|---|---|
-| `Présences` | **ID, Date, Catégorie, Joueur, Statut, Auteur, SyncTimestamp**, Heure, JoueurID, SessionID, Numéro, Note |
-| `Transactions` | **ID, Date, Flux, Catégorie, Montant, Détails, Auteur, SyncTimestamp**, Mode de paiement, Joueur, Staff, Événement, Mois |
+- **Android (Chrome/Edge)** : **Réglages → Installer l'application** →
+  prompt natif (PWA).
+- **iPhone/iPad (Safari)** : Partager → *Sur l'écran d'accueil*.
+- **APK Android** : bouton de téléchargement dans la même carte, ou artefacts du
+  workflow `android-apk.yml`.
 
 ---
 
