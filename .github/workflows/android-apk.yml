@@ -62,14 +62,30 @@ jobs:
         run: flutter pub get
 
       - name: Build APK
+        # Les erreurs Gradle/Dart sont republiées en annotations : le journal
+        # complet du job n'est pas toujours accessible, l'onglet Checks si.
         run: |
           MODE="${{ github.event.inputs.build_mode || (startsWith(github.ref, 'refs/tags/v') && 'release' || 'debug') }}"
           echo "Mode de build : $MODE"
+          set +e
           case "$MODE" in
-            release) flutter build apk --release ;;
-            split)   flutter build apk --release --split-per-abi ;;
-            *)       flutter build apk --debug ;;
+            release) flutter build apk --release > /tmp/apk.log 2>&1 ;;
+            split)   flutter build apk --release --split-per-abi > /tmp/apk.log 2>&1 ;;
+            *)       flutter build apk --debug > /tmp/apk.log 2>&1 ;;
           esac
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            # Contexte utile pour diagnostiquer sans le journal complet.
+            echo "--- java -version ---"; java -version 2>&1 | head -3
+            echo "--- RAM ---"; free -m | head -2
+            echo "--- SDK Android ---"; ls "${ANDROID_HOME:-/usr/local/lib/android/sdk}/platforms" 2>/dev/null | tail -5
+            echo "--- fin du journal Gradle ---"; tail -40 /tmp/apk.log
+            grep -iE "error|failed|exception|what went wrong|caused by" /tmp/apk.log | head -25 |
+              while IFS= read -r line; do echo "::error::$line"; done
+          else
+            tail -5 /tmp/apk.log
+          fi
+          exit $status
 
       - name: Rassembler les APK
         run: |
