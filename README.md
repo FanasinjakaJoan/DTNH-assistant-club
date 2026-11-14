@@ -181,8 +181,11 @@ Hosting** (`firebase.json`) — voir le guide DevOps.
    **Réglages → Synchronisation → Tester la connexion** doit répondre
    « Supabase connecté (DTNH). ».
 
-Sécurité : RLS activée **sans policy** (la clé `anon` ne voit rien), seule la
-clé `service_role` de la fonction écrit. Détails et regénération du secret :
+Sécurité : la clé `anon` seule ne lit rien. Un **membre connecté avec Google**
+lit les données du club (`SELECT` uniquement) ; les **écritures passent
+toujours** par l'Edge Function, qui contrôle le JWT ou le secret partagé,
+force `author_id = auth.uid()` et journalise le lot. Détails, policies et
+regénération du secret :
 [`docs/05-DEVOPS.md` § 8](docs/05-DEVOPS.md#8-synchronisation-supabase).
 
 ### B. Google Sheets — cible alternative (webhook Apps Script)

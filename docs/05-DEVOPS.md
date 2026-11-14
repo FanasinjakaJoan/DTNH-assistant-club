@@ -284,16 +284,29 @@ Réglages > Synchronisation dans l'application).
 | `dtnh_sync_log` | journal des lots reçus (diagnostic « le téléphone a-t-il envoyé ? ») |
 | `dtnh_finance_summary` | vue : entrées/sorties/solde par mois |
 | `dtnh_attendance_summary` | vue : présents/absents/excusés par séance |
-| Edge Function `dtnh-sync` | endpoint HTTPS appelé par l'application |
+| `dtnh_members` | vue : annuaire du staff connecté (nom, e-mail, avatar) |
+| Edge Function `dtnh-sync` | endpoint HTTPS appelé par l'application (v4) |
 
 Le schéma complet (rejouable à l'identique) est versionné dans
-`supabase/migrations/20261105000000_dtnh_sync_schema.sql`.
+`supabase/migrations/` :
+`20261105000000_dtnh_sync_schema.sql` (tables et vues) puis
+`20261106000000_dtnh_user_identity.sql` (identités, policies).
+La fonction est versionnée dans `supabase/functions/dtnh-sync/index.ts`.
 
-**Sécurité** : la RLS est activée **sans aucune policy**. La clé `anon` ne peut
-ni lire ni écrire ; seule la clé `service_role` (utilisée par l'Edge Function)
-a accès. L'application mobile/web **n'embarque aucune clé Supabase** : elle
-présente un simple secret partagé (`DTNH_SHARED_SECRET`) à la fonction, exactement
-comme le `SHARED_SECRET` d'Apps Script.
+**Sécurité** — deux chemins, un seul point d'écriture :
+
+| Qui | Lecture | Écriture |
+| --- | --- | --- |
+| Visiteur (clé `anon` seule) | **rien** (aucune policy) | rien |
+| Membre connecté avec Google | données du club (`SELECT` sur les 3 tables), son propre journal de lots | rien en direct |
+| Edge Function (`service_role`) | tout | tout, après contrôle du JWT **ou** du secret partagé |
+
+Les écritures ne passent **jamais** par un client : aucune policy
+`INSERT/UPDATE/DELETE` n'existe, ce qui garantit que tout lot est validé et
+journalisé par la fonction. Le JWT de session est présenté dans un en-tête
+`X-DTNH-Auth` (et non `Authorization`, réservé au préflight `apikey`), et
+l'`author_id` de chaque ligne est forcé à `auth.uid()` côté serveur — un client
+ne peut donc pas se faire passer pour quelqu'un d'autre.
 
 ### 8.2 Vérifier que la synchronisation fonctionne
 
@@ -303,10 +316,23 @@ Dans l'application : **Réglages > Synchronisation** doit afficher
 
 En SQL (Dashboard Supabase > SQL Editor) :
 
+Le message diffère selon l'identité : « Supabase connecté (DTNH) — compte
+votre@email » si la session Google est reconnue, « Supabase connecté (DTNH). »
+si l'envoi est passé par le secret partagé.
+
+En SQL (Dashboard Supabase > SQL Editor) :
+
 ```sql
--- Derniers lots reçus
-select batch_id, device_id, item_count, received_at
+-- Derniers lots reçus (user_id = membre connecté, null = secret partagé)
+select batch_id, device_id, item_count, user_id, received_at
 from dtnh_sync_log order by received_at desc limit 10;
+
+-- Qui a saisi quoi
+select author_id, author_name, count(*)
+from dtnh_attendance group by 1, 2 order by 3 desc;
+
+-- Membres connectés au club
+select display_name, email, provider, last_sign_in_at from dtnh_members;
 
 -- Totaux financiers du club
 select * from dtnh_finance_summary;
@@ -329,6 +355,31 @@ flutter build web --release \
 Les téléphones déjà installés continuent de fonctionner hors-ligne ; ils
 reprendront l'envoi après mise à jour de l'application (ou saisie du secret
 dans Réglages, qui surcharge la valeur compilée).
+
+---
+
+### 8.4 Identité des membres & policies
+
+Les policies sont posées par `supabase/migrations/20261106000000_dtnh_user_identity.sql` :
+
+| Table | Policy | Condition |
+| --- | --- | --- |
+| `dtnh_players` | `dtnh_players_read` (SELECT) | `auth.uid() is not null` |
+| `dtnh_attendance` | `dtnh_attendance_read` (SELECT) | `auth.uid() is not null` |
+| `dtnh_transactions` | `dtnh_transactions_read` (SELECT) | `auth.uid() is not null` |
+| `dtnh_sync_log` | `dtnh_sync_log_read` (SELECT) | `user_id = auth.uid()` |
+
+Aucune policy d'écriture : c'est **volontaire** (voir 8.1). Pour suspendre un
+membre, le désactiver dans Supabase (Authentication > Users) : il perd
+immédiatement la lecture sans qu'aucune policy ne change.
+
+Vérifier l'état réel en base :
+
+```sql
+select c.relname, p.polname, pg_get_expr(p.polqual, p.polrelid) as condition
+from pg_policy p join pg_class c on c.oid = p.polrelid
+where c.relname like 'dtnh_%' order by 1;
+```
 
 ---
 
