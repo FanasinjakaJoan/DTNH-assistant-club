@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../../core/errors/app_exception.dart';
 import '../../domain/entities/sync_queue_item.dart';
+import '../auth/auth_token_source.dart';
 import 'network_error.dart' as net_error;
 
 /// Une entrée du lot envoyé au webhook.
@@ -105,10 +106,16 @@ class AppsScriptClient {
   AppsScriptClient({
     http.Client? httpClient,
     this.timeout = const Duration(seconds: 30),
-  }) : _http = httpClient ?? http.Client();
+    AuthTokenSource? tokens,
+  })  : _http = httpClient ?? http.Client(),
+        _tokens = tokens ?? const AuthTokenSource();
 
   final http.Client _http;
   final Duration timeout;
+
+  /// Fournit le JWT de la session Google quand elle existe. Le transport reste
+  /// utilisable sans (mode hors-ligne / secret partagé seul).
+  final AuthTokenSource _tokens;
 
   Future<SheetBatchResponse> sendBatch({
     required String webhookUrl,
@@ -173,22 +180,41 @@ class AppsScriptClient {
     return (json['message'] ?? 'Connexion établie').toString();
   }
 
+  /// En-têtes de la requête.
+  ///
+  /// Le JWT de la session Google est ajouté **s'il existe** : l'Edge Function
+  /// l'utilise pour rattacher la ligne à `auth.uid()` ; le webhook Apps Script
+  /// l'ignore. Sans session (mode hors-ligne), l'en-tête est absent et le
+  /// secret partagé assure seul l'authentification.
+  Future<Map<String, String>> _headers() async {
+    final headers = <String, String>{
+      // Sur le web, `application/json` déclenche un préflight CORS
+      // (OPTIONS). `text/plain` en fait une requête « simple » (pas de
+      // préflight) ; Supabase et Apps Script parsent le JSON quel que
+      // soit le type déclaré.
+      // En natif (Android/iOS), pas de CORS : on garde `application/json`.
+      'Content-Type': kIsWeb
+          ? 'text/plain; charset=utf-8'
+          : 'application/json; charset=utf-8',
+      'Accept': 'application/json',
+    };
+    try {
+      final token = await _tokens.currentAccessToken();
+      if (token != null && token.isNotEmpty) {
+        headers['X-DTNH-Auth'] = 'Bearer $token';
+      }
+    } on Object {
+      // Une session illisible ne doit jamais bloquer un envoi hors-ligne.
+    }
+    return headers;
+  }
+
   Future<Map<String, dynamic>> _postJson(Uri uri, String body) async {
     try {
       final response = await _http
           .post(
             uri,
-            headers: const <String, String>{
-              // Sur le web, `application/json` déclenche un préflight CORS
-              // (OPTIONS). `text/plain` en fait une requête « simple » (pas de
-              // préflight) ; Supabase et Apps Script parsent le JSON quel que
-              // soit le type déclaré.
-              // En natif (Android/iOS), pas de CORS : on garde `application/json`.
-              'Content-Type': kIsWeb
-                  ? 'text/plain; charset=utf-8'
-                  : 'application/json; charset=utf-8',
-              'Accept': 'application/json',
-            },
+            headers: await _headers(),
             body: body,
           )
           .timeout(timeout);
@@ -204,7 +230,8 @@ class AppsScriptClient {
         throw SyncTransportException(
           'Accès refusé (HTTP ${response.statusCode}). Vérifiez le secret '
           'partagé de la cible (Supabase : DTNH_SHARED_SECRET ; Apps Script : '
-          'Script Property SHARED_SECRET).',
+          'Script Property SHARED_SECRET) et, si vous êtes connecté avec '
+          'Google, que votre compte est autorisé.',
           statusCode: response.statusCode,
           isRetryable: false,
         );

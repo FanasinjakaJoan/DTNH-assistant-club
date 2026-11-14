@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
+import '../data/auth/auth_token_source.dart';
 import '../data/local/dao/attendance_dao.dart';
 import '../data/local/dao/player_dao.dart';
 import '../data/local/dao/sync_queue_dao.dart';
@@ -97,8 +98,13 @@ final playerRepositoryProvider = Provider<PlayerRepository>(
 // Réseau / synchronisation
 // ---------------------------------------------------------------------------
 
+/// Fournisseur du jeton de session Google : un seul point d'injection pour
+/// tout le transport (surchargeable dans les tests).
+final authTokenSourceProvider =
+    Provider<AuthTokenSource>((ref) => const AuthTokenSource());
+
 final appsScriptClientProvider = Provider<AppsScriptClient>((ref) {
-  final client = AppsScriptClient();
+  final client = AppsScriptClient(tokens: ref.watch(authTokenSourceProvider));
   ref.onDispose(client.dispose);
   return client;
 });
