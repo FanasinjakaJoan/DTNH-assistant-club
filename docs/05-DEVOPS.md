@@ -18,8 +18,9 @@ telles quelles depuis la racine du dépôt.
 6. [Déploiement Web (Pages / Vercel / Firebase)](#6-déploiement-web)
 7. [CI/CD GitHub Actions](#7-cicd-github-actions)
 8. [Synchronisation Supabase](#8-synchronisation-supabase)
-9. [Installer l'application (PWA / APK)](#9-installer-lapplication-pwa--apk)
-10. [Dépannage](#10-dépannage)
+9. [Comptes & connexion Google](#9-comptes--connexion-google)
+10. [Installer l'application (PWA / APK)](#10-installer-lapplication-pwa--apk)
+11. [Dépannage](#11-dépannage)
 
 ---
 
@@ -331,7 +332,93 @@ dans Réglages, qui surcharge la valeur compilée).
 
 ---
 
-## 9. Installer l'application (PWA / APK)
+## 9. Comptes & connexion Google
+
+Depuis la version 1.2, les membres peuvent se connecter avec leur **compte
+Google**. La connexion est **facultative** : le bouton « Continuer sans compte
+(hors-ligne) » reste disponible et l'application démarre même si Supabase est
+injoignable (l'initialisation échoue silencieusement).
+
+### 9.1 Ce qui est déjà dans le code
+
+| Élément | Fichier |
+| --- | --- |
+| Service d'authentification (`signInWithGoogle`, `signOut`, session restaurée) | `app/lib/data/auth/auth_service.dart` |
+| État global Riverpod (`user`, `isLoading`, `error`, `isConfigured`) | `app/lib/features/auth/auth_controller.dart` |
+| Écran de connexion (carte Google + carte mode local) | `app/lib/features/auth/login_screen.dart` |
+| Remplissage automatique du pointage (`authorName` / `authorId`) | `settingsProvider.notifier.setAuthenticatedAuthor()` |
+| Retour OAuth Android (`mg.dtnh.dtnh_assistant_club://login-callback`) | `app/android/app/src/main/AndroidManifest.xml` |
+
+Le flux utilisé est **OAuth PKCE via Supabase Auth** (`AuthFlowType.pkce`) :
+aucun secret Google n'est embarqué dans l'application, seul l'`anon key`
+Supabase est compilé dans le bundle (public par conception, protégé par les RLS).
+
+### 9.2 Les 4 étapes à faire une seule fois (côté console)
+
+> Ces étapes ne peuvent pas être automatisées : elles exigent un accès humain
+> aux consoles Google Cloud et Supabase. Tant qu'elles ne sont pas faites, le
+> bouton Google renvoie « La connexion Google n'est pas encore activée côté
+> serveur » — le reste de l'application fonctionne normalement.
+
+1. **Google Cloud Console** > APIs & Services > *OAuth consent screen* :
+   type « External », nom « DTNH Assistant Club », ajouter les e-mails des
+   administrateurs en *test users*, publier (ou laisser en test).
+2. **Google Cloud Console** > Credentials > *Create credentials* >
+   **OAuth client ID** > type **Web application**.
+   - *Authorized JavaScript origins* :
+     `https://dtnh-assistant-club.vercel.app`
+   - *Authorized redirect URIs* (obligatoire, c'est Supabase qui reçoit le code) :
+     `https://osjsczvsnyknkdwbciab.supabase.co/auth/v1/callback`
+   - Récupérer le **Client ID** et le **Client Secret**.
+3. **Supabase** > Authentication > *Sign In / Providers* > **Google** :
+   activer, coller le Client ID + Client Secret, enregistrer.
+4. **Supabase** > Authentication > *URL Configuration* — déjà configuré, à
+   vérifier si le domaine change :
+   - *Site URL* : `https://dtnh-assistant-club.vercel.app`
+   - *Redirect URLs* : `https://dtnh-assistant-club.vercel.app/**`,
+     `https://dtnh-assistant-club-*.vercel.app/**` (previews),
+     `http://localhost:8080/**`, `http://localhost:3000/**`,
+     `https://fanasinjakaJoan.github.io/DTNH-assistant-club/**`,
+     `mg.dtnh.dtnh_assistant_club://login-callback` (retour APK Android).
+
+### 9.3 Variables optionnelles au build
+
+```bash
+flutter build web --release \
+  --dart-define=DTNH_SUPABASE_URL="https://osjsczvsnyknkdwbciab.supabase.co" \
+  --dart-define=DTNH_SUPABASE_ANON_KEY="<anon key>" \
+  --dart-define=DTNH_GOOGLE_CLIENT_ID="<client id>.apps.googleusercontent.com"
+```
+
+`DTNH_GOOGLE_CLIENT_ID` sert uniquement à afficher un message d'aide explicite ;
+le vrai couple ID/secret vit dans le dashboard Supabase. Dans GitHub
+(`Settings > Secrets and variables > Actions`), les mêmes valeurs sont injectées
+par `deploy.yml` via `DTNH_SUPABASE_URL`, `DTNH_SUPABASE_ANON_KEY`,
+`DTNH_GOOGLE_CLIENT_ID`.
+
+### 9.4 Vérifier que la connexion fonctionne
+
+1. Ouvrir l'URL de production, cliquer « Continuer avec Google ».
+2. Choisir un compte de test → retour sur l'application, l'écran de pointage
+   s'ouvre et l'auteur est pré-rempli avec le nom du compte.
+3. Dans Réglages, la section « Compte » affiche l'e-mail et permet de se
+   déconnecter.
+4. Côté Supabase : *Authentication > Users* montre l'utilisateur créé avec le
+   provider `google`.
+
+### 9.5 Erreurs fréquentes
+
+| Message | Cause | Correctif |
+| --- | --- | --- |
+| « non activée côté serveur » | provider Google désactivé dans Supabase | étape 9.2.3 |
+| `redirect_uri_mismatch` | URI de retour absente côté Google Cloud | ajouter `.../auth/v1/callback` |
+| « URL de retour non autorisée » | domaine absent des *Redirect URLs* Supabase | étape 9.2.4 |
+| `Unsupported provider: provider is not enabled` | même cause que la 1re ligne | étape 9.2.3 |
+| Popup fermée immédiatement | bloqueur de pop-up | autoriser les pop-ups du site |
+
+---
+
+## 10. Installer l'application (PWA / APK)
 
 Trois façons d'installer, aucune ne nécessite de store :
 
@@ -355,7 +442,7 @@ tag `v*`), voir la section 5.
 
 ---
 
-## 10. Dépannage
+## 11. Dépannage
 
 **Page blanche après déploiement** — le `--base-href` ne correspond pas au
 chemin. GitHub Pages projet → `"/DTNH-assistant-club/"` ; Vercel/Firebase racine
