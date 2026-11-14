@@ -179,7 +179,7 @@ pour la distribution interne.
 Installer sur un téléphone :
 
 ```bash
-adb install -r dist/dtnh-assistant-v1.0.0-release.apk
+adb install -r dist/dtnh-assistant-v1.2.0-release.apk
 # ou transférer le .apk sur l'appareil et l'ouvrir (autoriser les sources inconnues)
 ```
 
