@@ -5,6 +5,7 @@ import 'package:dtnh_assistant_club/core/errors/app_exception.dart';
 import 'package:dtnh_assistant_club/data/local/dao/attendance_dao.dart';
 import 'package:dtnh_assistant_club/data/local/dao/sync_queue_dao.dart';
 import 'package:dtnh_assistant_club/data/local/local_database.dart';
+import 'package:dtnh_assistant_club/data/auth/auth_token_source.dart';
 import 'package:dtnh_assistant_club/data/remote/apps_script_client.dart';
 import 'package:dtnh_assistant_club/data/remote/sync_payloads.dart';
 import 'package:dtnh_assistant_club/data/repositories/attendance_repository_impl.dart';
@@ -376,5 +377,69 @@ void main() {
       expect(second.succeeded, 1);
       expect((await queue.counters()).synced, 1);
     });
+
+    group('identite Google', () {
+      test('le JWT de session est presente dans X-DTNH-Auth', () async {
+        await seedAttendance(playerId: 'p1', name: 'A');
+
+        Map<String, String>? seen;
+        final client = AppsScriptClient(
+          tokens: const _FakeTokenSource('jeton-google-123'),
+          httpClient: MockClient((request) async {
+            seen = request.headers;
+            final body = jsonDecode(request.body) as Map<String, dynamic>;
+            return _okResponse(
+              {'ok': true, 'message': 'ok'},
+              body['items'] as List<dynamic>,
+            );
+          }),
+        );
+
+        final report = await SyncEngine(
+          queue: queue,
+          client: client,
+          settings: _FakeSettingsRepository(_configuredSettings),
+        ).pushPending();
+
+        expect(report.succeeded, 1);
+        expect(seen?['X-DTNH-Auth'], 'Bearer jeton-google-123');
+      });
+
+      test('sans session, aucun en-tete identite n est ajoute', () async {
+        await seedAttendance(playerId: 'p1', name: 'A');
+
+        Map<String, String>? seen;
+        final client = AppsScriptClient(
+          tokens: const _FakeTokenSource(null),
+          httpClient: MockClient((request) async {
+            seen = request.headers;
+            final body = jsonDecode(request.body) as Map<String, dynamic>;
+            return _okResponse(
+              {'ok': true, 'message': 'ok'},
+              body['items'] as List<dynamic>,
+            );
+          }),
+        );
+
+        final report = await SyncEngine(
+          queue: queue,
+          client: client,
+          settings: _FakeSettingsRepository(_configuredSettings),
+        ).pushPending();
+
+        expect(report.succeeded, 1);
+        expect(seen?.containsKey('X-DTNH-Auth'), isFalse);
+      });
+    });
   });
+}
+
+/// Session simulee : renvoie un jeton fixe, ou `null` en mode hors-ligne.
+class _FakeTokenSource extends AuthTokenSource {
+  const _FakeTokenSource(this._token);
+
+  final String? _token;
+
+  @override
+  Future<String?> currentAccessToken() async => _token;
 }
