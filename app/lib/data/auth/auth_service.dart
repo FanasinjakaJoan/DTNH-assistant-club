@@ -169,13 +169,3 @@ class AuthService {
     return raw;
   }
 }
-
-/// Erreur d'authentification affichable telle quelle à l'utilisateur.
-class AuthFailureException extends AppException {
-  const AuthFailureException(super.message, {super.cause});
-}
-
-/// Configuration d'authentification incomplète côté build.
-class AuthConfigurationException extends AppException {
-  const AuthConfigurationException(super.message, {super.cause});
-}

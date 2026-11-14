@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/errors/app_exception.dart';
 import '../../data/auth/auth_service.dart';
 import '../../domain/entities/app_settings.dart';
 import '../settings/settings_controller.dart';

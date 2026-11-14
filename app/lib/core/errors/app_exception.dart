@@ -44,3 +44,13 @@ class SyncTransportException extends AppException {
 class StorageException extends AppException {
   const StorageException(super.message, {super.cause});
 }
+
+/// Échec de la connexion Google / de la session Supabase.
+class AuthFailureException extends AppException {
+  const AuthFailureException(super.message, {super.cause});
+}
+
+/// Configuration d'authentification incomplète dans le build.
+class AuthConfigurationException extends AppException {
+  const AuthConfigurationException(super.message, {super.cause});
+}
