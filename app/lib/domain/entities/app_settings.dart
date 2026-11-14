@@ -88,6 +88,9 @@ class AppSettings {
 
   bool get isConfigured => hasSyncTarget && hasAuthor;
 
+  /// `true` si cette compilation embarque la configuration Google/Supabase.
+  static bool get supportsGoogleAuth => AppConfig.isGoogleAuthConfigured;
+
   bool get hasAuthor =>
       (authorName?.trim().isNotEmpty ?? false) &&
       (authorId?.trim().isNotEmpty ?? false);

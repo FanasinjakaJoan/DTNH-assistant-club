@@ -10,6 +10,7 @@ import '../../core/widgets/install_app_tile.dart';
 import '../../di/providers.dart';
 import '../../domain/entities/app_settings.dart';
 import '../../domain/enums/sync_target.dart';
+import '../auth/auth_controller.dart';
 import '../sync/sync_controller.dart';
 import 'demo_seed.dart';
 import 'roster_screen.dart';
@@ -66,6 +67,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
         children: [
+          const _AccountSection(),
           const SectionHeader(
             title: 'Identité du pointage',
             padding: EdgeInsets.fromLTRB(4, 4, 4, 10),
@@ -706,6 +708,146 @@ class _SyncTargetTile extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Section « Compte » : état de la connexion Google, connexion / déconnexion.
+class _AccountSection extends ConsumerWidget {
+  const _AccountSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final auth = ref.watch(authControllerProvider);
+    final settings = ref.watch(settingsProvider);
+
+    if (!auth.isConfigured) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SectionHeader(
+          title: 'Compte du club',
+          subtitle: 'Connexion Google : traçabilité des saisies',
+        ),
+        AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  CircleAvatar(
+                    radius: 21,
+                    backgroundColor:
+                        auth.isSignedIn ? AppColors.green : AppColors.navyLight,
+                    child: auth.isSignedIn
+                        ? Text(
+                            auth.user!.initials,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 13,
+                            ),
+                          )
+                        : const Icon(
+                            Icons.person_outline_rounded,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          auth.isSignedIn
+                              ? auth.user!.displayName
+                              : 'Mode local (non connecté)',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          auth.isSignedIn
+                              ? (auth.user!.email.isEmpty
+                                  ? 'Compte Google connecté'
+                                  : auth.user!.email)
+                              : 'Vos saisies restent sur ce téléphone. '
+                                  'Connectez-vous pour les rattacher à votre '
+                                  'compte.',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            height: 1.35,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              if (auth.hasError) ...[
+                const SizedBox(height: 12),
+                InfoBanner(
+                  message: auth.error!,
+                  icon: Icons.error_outline_rounded,
+                  color: AppColors.red,
+                  background: AppColors.redSoft,
+                ),
+              ],
+              const SizedBox(height: 12),
+              if (auth.isSignedIn)
+                OutlinedButton.icon(
+                  onPressed: auth.isLoading
+                      ? null
+                      : () => ref
+                          .read(authControllerProvider.notifier)
+                          .signOut(),
+                  icon: const Icon(Icons.logout_rounded, size: 18),
+                  label: const Text('Se déconnecter'),
+                )
+              else
+                FilledButton.icon(
+                  onPressed: auth.isLoading
+                      ? null
+                      : () => ref
+                          .read(authControllerProvider.notifier)
+                          .signInWithGoogle(),
+                  icon: auth.isLoading
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.login_rounded, size: 18),
+                  label: Text(
+                    auth.isLoading
+                        ? 'Connexion…'
+                        : 'Se connecter avec Google',
+                  ),
+                ),
+              if (settings.authorName != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  'Auteur enregistré : ${settings.authorName}',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

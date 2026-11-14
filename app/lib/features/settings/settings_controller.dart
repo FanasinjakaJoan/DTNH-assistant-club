@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../data/auth/auth_service.dart';
 import '../../di/providers.dart';
 import '../../domain/entities/app_settings.dart';
 import '../../domain/enums/sync_target.dart';
@@ -55,6 +56,12 @@ class SettingsController extends Notifier<AppSettings> {
           sheetId: (sheetId ?? '').trim().isEmpty ? null : sheetId!.trim(),
         ),
       );
+
+  /// Définit l'auteur à partir de la session Google : l'identifiant stable
+  /// devient l'UUID Supabase, ce qui relie chaque pointage à un compte réel
+  /// (et permettra de durcir la RLS sur `auth.uid()`).
+  Future<void> setAuthenticatedAuthor(AuthUser user) =>
+      _persist(state.copyWith(authorName: user.displayName, authorId: user.id));
 
   /// Définit l'auteur du pointage. L'identifiant reste stable si le nom est
   /// identique (traçabilité dans les colonnes `Auteur`).

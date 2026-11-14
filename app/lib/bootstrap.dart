@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'app.dart';
+import 'core/config/app_config.dart';
 import 'data/local/local_database.dart';
 import 'di/providers.dart';
 import 'sync/background_worker.dart';
@@ -16,6 +18,24 @@ Future<void> bootstrap() async {
 
   try {
     final database = await LocalDatabase.open();
+
+    // Authentification Google : initialisée seulement si la clé est présente.
+    // Un échec ici ne doit jamais empêcher l'application de démarrer — le mode
+    // local reste le socle de fonctionnement hors-ligne.
+    try {
+      if (AppConfig.supabaseAnonKey.trim().isNotEmpty) {
+        await Supabase.initialize(
+          url: AppConfig.supabaseUrl,
+          anonKey: AppConfig.supabaseAnonKey,
+          // Sur le web, Supabase lit les jetons du retour OAuth dans l'URL.
+          authOptions: const FlutterAuthClientOptions(
+            authFlowType: AuthFlowType.pkce,
+          ),
+        );
+      }
+    } catch (error, stack) {
+      debugPrint('Supabase Auth indisponible : $error\n$stack');
+    }
 
     // La synchronisation de fond est optionnelle : si le plugin échoue
     // (émulateur, iOS sans capability), l'app reste pleinement utilisable.

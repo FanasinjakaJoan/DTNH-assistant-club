@@ -44,6 +44,11 @@ env:
     ${{ vars.DTNH_APK_URL || format('https://github.com/{0}/releases/latest', github.repository) }}
   DTNH_WEB_URL: >-
     ${{ vars.DTNH_WEB_URL || format('https://{0}.github.io/{1}/', github.repository_owner, github.event.repository.name) }}
+  # Authentification Google (Supabase Auth). La clé anon est publique par
+  # conception (protégée par la RLS) ; le client ID Google est documentaire.
+  DTNH_SUPABASE_URL: ${{ vars.DTNH_SUPABASE_URL || 'https://osjsczvsnyknkdwbciab.supabase.co' }}
+  DTNH_SUPABASE_ANON_KEY: ${{ secrets.DTNH_SUPABASE_ANON_KEY }}
+  DTNH_GOOGLE_CLIENT_ID: ${{ vars.DTNH_GOOGLE_CLIENT_ID }}
 
 jobs:
   build:
@@ -100,6 +105,9 @@ jobs:
           --dart-define=DTNH_SUPABASE_SECRET="$DTNH_SUPABASE_SECRET"
           --dart-define=DTNH_APK_URL="$DTNH_APK_URL"
           --dart-define=DTNH_WEB_URL="$DTNH_WEB_URL"
+          --dart-define=DTNH_SUPABASE_URL="$DTNH_SUPABASE_URL"
+          --dart-define=DTNH_SUPABASE_ANON_KEY="$DTNH_SUPABASE_ANON_KEY"
+          --dart-define=DTNH_GOOGLE_CLIENT_ID="$DTNH_GOOGLE_CLIENT_ID"
 
       - name: Vérifier l'activation de GitHub Pages
         # GitHub Pages doit être activé une seule fois par un administrateur :

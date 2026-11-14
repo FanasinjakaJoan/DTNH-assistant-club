@@ -12,6 +12,9 @@
 #    DTNH_SUPABASE_SECRET    secret partagé de la fonction
 #    DTNH_APK_URL            page de téléchargement de l'APK
 #    DTNH_WEB_URL            URL publique de l'application
+#    DTNH_SUPABASE_URL       URL du projet Supabase (Auth)
+#    DTNH_SUPABASE_ANON_KEY  clé publishable (protégée par la RLS)
+#    DTNH_GOOGLE_CLIENT_ID   client ID OAuth Google (documentaire)
 # ============================================================================
 set -euo pipefail
 
@@ -54,6 +57,15 @@ if [ -n "${DTNH_APK_URL:-}" ]; then
 fi
 if [ -n "${DTNH_WEB_URL:-}" ]; then
   DART_DEFINES+=("--dart-define=DTNH_WEB_URL=${DTNH_WEB_URL}")
+fi
+if [ -n "${DTNH_SUPABASE_URL:-}" ]; then
+  DART_DEFINES+=("--dart-define=DTNH_SUPABASE_URL=${DTNH_SUPABASE_URL}")
+fi
+if [ -n "${DTNH_SUPABASE_ANON_KEY:-}" ]; then
+  DART_DEFINES+=("--dart-define=DTNH_SUPABASE_ANON_KEY=${DTNH_SUPABASE_ANON_KEY}")
+fi
+if [ -n "${DTNH_GOOGLE_CLIENT_ID:-}" ]; then
+  DART_DEFINES+=("--dart-define=DTNH_GOOGLE_CLIENT_ID=${DTNH_GOOGLE_CLIENT_ID}")
 fi
 
 echo "==> flutter build web --release (${#DART_DEFINES[@]} dart-define)"

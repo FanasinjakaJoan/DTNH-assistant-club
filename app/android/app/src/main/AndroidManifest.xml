@@ -27,6 +27,18 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Retour de l'authentification Google (Supabase Auth) :
+                 le navigateur revient dans l'application via ce schéma.
+                 Doit correspondre à AppConfig.androidAuthCallbackScheme et
+                 aux « Redirect URLs » configurées dans Supabase. -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data
+                    android:scheme="mg.dtnh.dtnh_assistant_club"
+                    android:host="login-callback"/>
+            </intent-filter>
         </activity>
         <!-- Requis par le Flutter tool pour générer GeneratedPluginRegistrant.java -->
         <meta-data

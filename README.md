@@ -9,6 +9,9 @@ aux administrateurs.
 > synchronisation (Supabase ou Google Sheets) est un effet de bord, jamais un
 > prérequis.
 
+**v1.2** — connexion Google (facultative) via Supabase Auth, synchronisation
+Supabase et installation PWA / APK depuis l'application.
+
 | Présences | Finances | Historique | Synchronisation |
 |---|---|---|---|
 | Pointage par catégorie (U12, U14-U15, U16, U17-U18), 4 statuts, 1 tap | Écolages, cotisations, billetterie, terrain, coachs, rafraîchissements | Séances et taux de présence par joueur | File d'attente transparente, retry, succès partiel |
@@ -21,6 +24,7 @@ Maquettes visuelles navigables : [`docs/mockups/index.html`](docs/mockups/index.
 
 - [Fonctionnalités](#fonctionnalités)
 - [Démarrage rapide](#démarrage-rapide)
+- [Connexion Google](#connexion-google)
 - [Build, prévisualisation & déploiement (DevOps)](#build-prévisualisation--déploiement-devops)
 - [Synchronisation (Supabase / Google Sheets)](#synchronisation-supabase--google-sheets)
 - [Architecture](#architecture)
@@ -94,7 +98,8 @@ n'est requise pour Android et le Web.
 
 Au premier lancement :
 
-1. saisir votre nom (auteur du pointage) — option « pré-remplir l'effectif de
+1. **se connecter avec Google** (recommandé) ou choisir « Continuer sans compte
+   (hors-ligne) » et saisir un nom — option « pré-remplir l'effectif de
    démonstration » (40 joueurs répartis dans les 4 catégories) ;
 2. l'application est **immédiatement utilisable hors-ligne** ;
 3. la synchronisation Supabase est déjà pré-configurée (`AppConfig`) : rien à
@@ -107,6 +112,33 @@ flutter analyze       # lints stricts (strict-casts, strict-raw-types)
 
 Aucune génération de code (`build_runner`) n'est nécessaire : les adapters Hive
 sont écrits à la main.
+
+---
+
+## Connexion Google
+
+Les membres se connectent avec leur **compte Google** (OAuth PKCE via Supabase
+Auth). La connexion est **facultative** : « Continuer sans compte (hors-ligne) »
+fonctionne toujours, et l'application démarre même si Supabase est injoignable.
+
+- Session restaurée au lancement : le nom du compte pré-remplit l'auteur du
+  pointage (`authorName` / `authorId`), section « Compte » dans Réglages pour se
+  déconnecter.
+- APK Android : retour de consentement géré par intent-filter
+  `mg.dtnh.dtnh_assistant_club://login-callback`.
+
+**À faire une fois dans les consoles** (impossible à automatiser, faute d'accès
+API aux identifiants OAuth) :
+
+1. Google Cloud Console → *OAuth client ID* de type **Web application**, avec
+   l'URI de retour
+   `https://osjsczvsnyknkdwbciab.supabase.co/auth/v1/callback` ;
+2. Supabase → Authentication → Providers → **Google** : coller Client ID +
+   Client Secret, enregistrer.
+
+Tant que ces deux étapes ne sont pas faites, seul le mode hors-ligne est
+disponible. Procédure détaillée, variables `DTNH_GOOGLE_CLIENT_ID` et dépannage :
+[`docs/05-DEVOPS.md` § 9](docs/05-DEVOPS.md#9-comptes--connexion-google).
 
 ---
 
