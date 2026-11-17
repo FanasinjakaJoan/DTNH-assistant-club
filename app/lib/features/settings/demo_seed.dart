@@ -96,6 +96,7 @@ class DemoSeed {
   Future<void> addPlayer({
     required String fullName,
     required TeamCategory category,
+    DateTime? birthDate,
     int? jerseyNumber,
     String? phone,
   }) async {
@@ -105,6 +106,7 @@ class DemoSeed {
         id: const Uuid().v4(),
         fullName: fullName.trim(),
         category: category,
+        birthDate: birthDate,
         jerseyNumber: jerseyNumber,
         phone: phone?.trim(),
         createdAt: now,

@@ -220,9 +220,16 @@ class AppsScriptClient {
           .timeout(timeout);
 
       if (response.statusCode >= 500) {
+        // Le corps peut contenir un diagnostic exploitable (`BOOT_ERROR` d'une
+        // Edge Function mal déployée, « Function failed to start »...). On le
+        // remonte tel quel : sans cela, le staff ne voit qu'un « HTTP 503 ».
+        final detail = _serverMessage(response.bodyBytes);
         throw SyncTransportException(
-          'Le serveur de synchronisation est momentanément indisponible '
-          '(HTTP ${response.statusCode}).',
+          detail == null
+              ? 'Le serveur de synchronisation est momentanément indisponible '
+                  '(HTTP ${response.statusCode}).'
+              : 'Le serveur de synchronisation a refusé le lot '
+                  '(HTTP ${response.statusCode}) : $detail',
           statusCode: response.statusCode,
         );
       }
@@ -286,6 +293,26 @@ class AppsScriptClient {
         );
       }
       rethrow;
+    }
+  }
+
+  /// Extrait un message d'erreur lisible d'un corps de réponse serveur.
+  ///
+  /// Supabase renvoie `{"message": "..."}` ou `{"code": "BOOT_ERROR",
+  /// "message": "..."}` ; Apps Script renvoie `{"message": "..."}`. On renvoie
+  /// `null` si rien d'exploitable n'est trouvé, pour que l'appelant garde son
+  /// message générique.
+  String? _serverMessage(List<int> bodyBytes) {
+    if (bodyBytes.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(utf8.decode(bodyBytes));
+      if (decoded is! Map) return null;
+      final message = decoded['message'] ?? decoded['msg'] ?? decoded['error'];
+      final text = message?.toString().trim();
+      if (text == null || text.isEmpty) return null;
+      return text.length <= 200 ? text : '${text.substring(0, 200)}…';
+    } catch (_) {
+      return null;
     }
   }
 

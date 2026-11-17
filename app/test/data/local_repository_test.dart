@@ -282,4 +282,40 @@ void main() {
       expect(pending.first.payload['montant'], 75000);
     });
   });
+
+  group('Flux réactifs — annulation', () {
+    // Un `await for` en attente dans un générateur `async*` ne se laisse pas
+    // annuler : l'annulation ne rend jamais la main. Cela bloquait `dispose()`
+    // du planificateur et laissait des abonnements zombies. Ces tests
+    // échouent (par timeout) si la régression revient.
+    test('queue.watchAll() s\'annule sans bloquer', () async {
+      final subscription = queue.watchAll().listen((_) {});
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await subscription.cancel().timeout(const Duration(seconds: 5));
+    });
+
+    test('watchCounters() s\'annule sans bloquer', () async {
+      final subscription = queue.watchCounters().listen((_) {});
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await subscription.cancel().timeout(const Duration(seconds: 5));
+    });
+
+    test('watchCounters() émet à chaque écriture en file', () async {
+      final emissions = <SyncQueueCounters>[];
+      final subscription =
+          queue.watchCounters().listen((counters) => emissions.add(counters));
+
+      await queue.enqueue(
+        entityType: SyncEntityType.transaction,
+        entityId: 't1',
+        payload: const {'id': 't1'},
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(emissions, isNotEmpty);
+      expect(emissions.last.outstanding, 1);
+
+      await subscription.cancel().timeout(const Duration(seconds: 5));
+    });
+  });
 }

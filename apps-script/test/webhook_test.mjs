@@ -328,6 +328,45 @@ console.log('12) doGet');
 const get = JSON.parse(sandbox.doGet({ parameter: { secret: H.secrets } }).content);
 check('doGet ok', get.ok === true, get);
 
+console.log('13) joueur avec date de naissance');
+const player = {
+  id: 'p-0001',
+  entity: 'player',
+  sheet: 'Joueurs',
+  operation: 'upsert',
+  data: {
+    id: 'p-0001',
+    nom: 'Rakoto Jean',
+    categorie: 'U16',
+    dateNaissance: '2010-04-17',
+    numero: 7,
+    telephone: '0340000000',
+    actif: true,
+  },
+};
+r = post({ action: 'push', secret: H.secrets, deviceId: 'dev-1', batchId: 'b6', items: [player] });
+check('joueur ok', r.ok === true && r.results[0].status === 'ok', r.results);
+const playerHeader = sheetRows('Joueurs')[0];
+check(
+  'en-tête date de naissance',
+  playerHeader[3] === 'Date de naissance',
+  playerHeader,
+);
+const playerRow = sheetRows('Joueurs')[1];
+check('date de naissance écrite', playerRow[3] === '2010-04-17', playerRow);
+check('numéro après la date', playerRow[4] === 7, playerRow);
+
+console.log('14) joueur sans date de naissance (fiche ancienne)');
+const playerNoBirth = {
+  ...player,
+  id: 'p-0002',
+  data: { ...player.data, id: 'p-0002', dateNaissance: null },
+};
+r = post({ action: 'push', secret: H.secrets, deviceId: 'dev-1', batchId: 'b7', items: [playerNoBirth] });
+const noBirthRow = sheetRows('Joueurs').find((line) => line[0] === 'p-0002');
+check('ligne écrite sans date', !!noBirthRow, sheetRows('Joueurs'));
+check('cellule date vide', noBirthRow[3] === '', noBirthRow);
+
 console.log('');
 console.log(failures === 0 ? 'TOUS LES TESTS PASSENT' : `${failures} ÉCHEC(S)`);
 process.exit(failures === 0 ? 0 : 1);

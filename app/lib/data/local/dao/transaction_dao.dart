@@ -42,9 +42,9 @@ class TransactionDao {
 
   Stream<List<FinancialTransaction>> watchAll() async* {
     yield getAll();
-    await for (final store in _db.changes) {
-      if (store == DbStore.transactions) yield getAll();
-    }
+    // `yield*` (et non `await for`) : un `await for` en attente ne se
+    // laisse pas annuler, ce qui bloque `dispose()` de ses abonnés.
+    yield* _db.watch(DbStore.transactions).map((_) => getAll());
   }
 
   static int _byMostRecentFirst(

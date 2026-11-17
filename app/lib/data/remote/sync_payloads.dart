@@ -55,6 +55,9 @@ class SyncPayloads {
         'id': player.id,
         'nom': player.fullName,
         'categorie': player.category.code,
+        // `yyyy-MM-dd` : format de date stable, aligné sur la colonne `date` des
+        // présences (tri lexicographique = tri chronologique).
+        'dateNaissance': player.birthDateYmd,
         'numero': player.jerseyNumber,
         'telephone': player.phone,
         'actif': player.isActive,

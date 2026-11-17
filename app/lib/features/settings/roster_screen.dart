@@ -3,9 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/status_styles.dart';
+import '../../core/utils/date_x.dart';
 import '../../core/widgets/app_card.dart';
 import '../../core/widgets/category_selector.dart';
 import '../../core/widgets/common_widgets.dart';
+import '../../core/widgets/date_picker_sheet.dart';
 import '../../di/providers.dart';
 import '../../domain/entities/player.dart';
 import '../../domain/enums/team_category.dart';
@@ -122,14 +124,7 @@ class RosterScreen extends ConsumerWidget {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    if (player.phone != null)
-                      Text(
-                        player.phone!,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
+                    _buildSubtitle(player),
                   ],
                 ),
               ),
@@ -156,6 +151,22 @@ class RosterScreen extends ConsumerWidget {
     ];
   }
 
+  /// Sous-titre : âge (si la date de naissance est connue) puis téléphone.
+  Widget _buildSubtitle(Player player) {
+    final age = player.age;
+    final parts = <String>[
+      if (age != null) '$age ans',
+      if (player.phone != null) player.phone!,
+    ];
+    if (parts.isEmpty) return const SizedBox.shrink();
+    return Text(
+      parts.join(' · '),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+    );
+  }
+
   Future<void> _openAddPlayer(BuildContext context, WidgetRef ref) async {
     await showModalBottomSheet<void>(
       context: context,
@@ -169,10 +180,11 @@ class RosterScreen extends ConsumerWidget {
           bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
         ),
         child: _AddPlayerSheet(
-          onSaved: (name, category, jersey, phone) async {
+          onSaved: (name, category, birthDate, jersey, phone) async {
             await DemoSeed(ref.read(playerRepositoryProvider)).addPlayer(
               fullName: name,
               category: category,
+              birthDate: birthDate,
               jerseyNumber: jersey,
               phone: phone,
             );
@@ -195,6 +207,7 @@ class _AddPlayerSheet extends StatefulWidget {
   final Future<void> Function(
     String name,
     TeamCategory category,
+    DateTime? birthDate,
     int? jersey,
     String? phone,
   ) onSaved;
@@ -208,6 +221,7 @@ class _AddPlayerSheetState extends State<_AddPlayerSheet> {
   final TextEditingController _jerseyController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
   TeamCategory _category = TeamCategory.u12;
+  DateTime? _birthDate;
   bool _saving = false;
 
   @override
@@ -218,11 +232,44 @@ class _AddPlayerSheetState extends State<_AddPlayerSheet> {
     super.dispose();
   }
 
+  /// Âge révolu à la date du jour, `null` sans date de naissance.
+  int? get _age {
+    final birth = _birthDate;
+    if (birth == null) return null;
+    final now = DateTime.now();
+    var age = now.year - birth.year;
+    if (now.month < birth.month ||
+        (now.month == birth.month && now.day < birth.day)) {
+      age--;
+    }
+    return age < 0 ? null : age;
+  }
+
+  Future<void> _pickBirthDate() async {
+    final now = DateTime.now();
+    final picked = await showAppDatePicker(
+      context,
+      initialDate: _birthDate ?? DateTime(now.year - 12, now.month, now.day),
+      firstDate: DateTime(now.year - 40),
+      lastDate: now,
+    );
+    if (picked == null) return;
+    setState(() => _birthDate = picked);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final age = _age;
+    final suggestion = age == null ? null : TeamCategory.forAge(age);
+
     return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(
+          18,
+          14,
+          18,
+          MediaQuery.of(context).viewInsets.bottom + 18,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -241,6 +288,8 @@ class _AddPlayerSheetState extends State<_AddPlayerSheet> {
                 prefixIcon: Icon(Icons.person_outline_rounded),
               ),
             ),
+            const SizedBox(height: 12),
+            _buildBirthDateField(age),
             const SizedBox(height: 12),
             Row(
               children: [
@@ -269,13 +318,33 @@ class _AddPlayerSheetState extends State<_AddPlayerSheet> {
               ],
             ),
             const SizedBox(height: 14),
-            const Text(
-              'Catégorie',
-              style: TextStyle(
-                fontSize: 12.5,
-                fontWeight: FontWeight.w700,
-                color: AppColors.textSecondary,
-              ),
+            Row(
+              children: [
+                const Text(
+                  'Catégorie',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                if (suggestion != null && suggestion != _category) ...[
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => setState(() => _category = suggestion),
+                      child: Text(
+                        'Âge $age : plutôt ${suggestion.label} ? Toucher pour appliquer.',
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.orange,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
             const SizedBox(height: 8),
             CategorySelector(
@@ -295,6 +364,7 @@ class _AddPlayerSheetState extends State<_AddPlayerSheet> {
                 await widget.onSaved(
                   name,
                   _category,
+                  _birthDate,
                   int.tryParse(_jerseyController.text.trim()),
                   _phoneController.text.trim().isEmpty
                       ? null
@@ -305,6 +375,38 @@ class _AddPlayerSheetState extends State<_AddPlayerSheet> {
               },
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBirthDateField(int? age) {
+    final birth = _birthDate;
+    return InkWell(
+      onTap: _pickBirthDate,
+      borderRadius: BorderRadius.circular(12),
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: 'Date de naissance (facultatif)',
+          prefixIcon: const Icon(Icons.cake_outlined),
+          suffixIcon: birth == null
+              ? const Icon(Icons.calendar_today_rounded, size: 18)
+              : IconButton(
+                  tooltip: 'Effacer',
+                  iconSize: 18,
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => setState(() => _birthDate = null),
+                  icon: const Icon(Icons.close_rounded),
+                ),
+        ),
+        child: Text(
+          birth == null
+              ? 'Non renseignée'
+              : '${birth.dmy}${age != null ? " · $age ans" : ""}',
+          style: TextStyle(
+            fontSize: 14,
+            color: birth == null ? AppColors.textSecondary : null,
+          ),
         ),
       ),
     );

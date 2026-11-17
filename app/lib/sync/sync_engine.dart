@@ -261,4 +261,12 @@ class SyncEngine {
         webhookUrl: _settings.current.activeSyncUrl,
         secret: _settings.current.activeSyncSecret,
       );
+
+  /// `true` s'il reste au moins un élément à envoyer (PENDING ou ERROR).
+  ///
+  /// Permet au planificateur de ne pas déclencher un passage inutile : sans ce
+  /// filtre, le filet de sécurité périodique mettrait à jour `lastSyncAt` même
+  /// quand rien n'a été envoyé, ce qui rendrait cet indicateur trompeur.
+  Future<bool> hasOutstanding() async =>
+      (await _queue.counters()).outstanding > 0;
 }

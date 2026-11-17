@@ -129,7 +129,9 @@ DTNH-assistant-club/
 │   │   │
 │   │   ├── sync/                         # moteur de synchronisation (application)
 │   │   │   ├── sync_engine.dart          # outbox -> webhook -> statuts
-│   │   │   ├── sync_scheduler.dart       # listener réseau + debounce + backoff
+│   │   │   ├── sync_scheduler.dart       # déclencheurs coalescés (démarrage,
+│   │   │   │                             #   réseau, reprise, filet périodique)
+│   │   │   ├── network_status.dart       # état réseau observable (testable)
 │   │   │   └── background_worker.dart    # Workmanager (isolate séparé)
 │   │   │
 │   │   ├── di/providers.dart             # graphe d'injection Riverpod
@@ -164,8 +166,11 @@ DTNH-assistant-club/
 │   └── test/
 │       ├── core/money_test.dart
 │       ├── domain/aggregates_test.dart
+│       ├── domain/player_birthdate_test.dart
 │       ├── data/local_repository_test.dart
-│       └── sync/sync_engine_test.dart
+│       └── sync/
+│           ├── sync_engine_test.dart
+│           └── sync_scheduler_test.dart
 │
 ├── apps-script/                          # Backend Google Sheets
 │   ├── Code.gs                           # doPost / doGet / setup / upsert idempotent
@@ -300,8 +305,10 @@ chaque `catch` produit un `state.error` en français, prêt à afficher.
 |---|---|---|
 | Unitaire pur | `test/core/money_test.dart` | Formatage Ariary, parsing, clés de date |
 | Unitaire domaine | `test/domain/aggregates_test.dart` | Taux de présence, soldes, enums tolérants |
+| Unitaire domaine | `test/domain/player_birthdate_test.dart` | Calcul d'âge, catégorie suggérée, migration Hive v1 → v2, payload `dateNaissance` |
 | Intégration stockage | `test/data/local_repository_test.dart` | Écriture Hive réelle, idempotence, coalescence, tombstones |
 | Intégration sync | `test/sync/sync_engine_test.dart` | Lots, succès partiel, panne réseau, retry |
+| Intégration sync | `test/sync/sync_scheduler_test.dart` | Déclencheurs automatiques (démarrage, retour en ligne, reprise, filet périodique), messages d'erreur 5xx |
 
 Les tests d'intégration ouvrent Hive dans un dossier temporaire
 (`LocalDatabase.open(directory: ...)`) : pas de mock de la base, on teste le

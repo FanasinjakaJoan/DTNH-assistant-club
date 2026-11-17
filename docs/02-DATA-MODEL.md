@@ -254,6 +254,7 @@ CREATE TABLE players (
   id             TEXT    PRIMARY KEY,
   full_name      TEXT    NOT NULL,
   category       TEXT    NOT NULL CHECK (category IN ('U12','U14-U15','U16','U17-U18')),
+  birth_date     DATE,                       -- date de naissance (nullable)
   jersey_number  INTEGER,
   phone          TEXT,
   is_active      INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0,1)),
@@ -448,7 +449,8 @@ sont des colonnes de traçabilité ajoutées en fin de tableau.
 | 1 | ID | `id` |
 | 2 | Nom | `fullName` |
 | 3 | Catégorie | `category.code` |
-| 4 | Numéro | `jerseyNumber` |
-| 5 | Téléphone | `phone` |
-| 6 | Actif | `isActive` |
-| 7 | SyncTimestamp | généré par Apps Script |
+| 4 | Date de naissance | `birthDateYmd` (`yyyy-MM-dd`, vide si non renseignée) |
+| 5 | Numéro | `jerseyNumber` |
+| 6 | Téléphone | `phone` |
+| 7 | Actif | `isActive` |
+| 8 | SyncTimestamp | généré par Apps Script |

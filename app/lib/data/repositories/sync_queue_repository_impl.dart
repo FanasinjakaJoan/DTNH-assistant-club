@@ -72,6 +72,16 @@ class SyncQueueRepositoryImpl implements SyncQueueRepository {
   Stream<List<SyncQueueItem>> watchAll() => _dao.watchAll();
 
   @override
+  Stream<SyncQueueCounters> watchCounters() =>
+      _dao.watchAll().map(_countersOf);
+
+  SyncQueueCounters _countersOf(List<SyncQueueItem> items) => SyncQueueCounters(
+        pending: items.where((i) => i.status == SyncState.pending).length,
+        error: items.where((i) => i.status == SyncState.error).length,
+        synced: items.where((i) => i.status == SyncState.synced).length,
+      );
+
+  @override
   Future<SyncQueueCounters> counters() async => SyncQueueCounters(
         pending: _dao.count(SyncState.pending),
         error: _dao.count(SyncState.error),
