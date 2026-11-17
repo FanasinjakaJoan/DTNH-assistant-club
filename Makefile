@@ -7,7 +7,8 @@
 SHELL := /bin/bash
 
 .PHONY: help doctor get web chrome build-web pages-web apk apk-release apk-split \
-        test analyze clean mockups setup-ios webhook-test
+        test analyze clean mockups setup-ios webhook-test fn-check fn-test \
+        deploy-fn
 
 help: ## Affiche cette aide
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -48,6 +49,15 @@ analyze: ## Analyse statique (lints stricts)
 
 webhook-test: ## Tests Node du webhook Apps Script (sans dépendance)
 	@node apps-script/test/webhook_test.mjs
+
+fn-check: ## Typecheck de l'Edge Function Supabase (deno check)
+	@cd supabase/functions/dtnh-sync && deno check index.ts
+
+fn-test: ## Tests de l'Edge Function Supabase (deno test)
+	@cd supabase/functions/dtnh-sync && DTNH_DISABLE_SERVE=1 deno test --allow-env .
+
+deploy-fn: ## Déploie l'Edge Function dtnh-sync (requiert SUPABASE_ACCESS_TOKEN)
+	@bash scripts/deploy_supabase_function.sh
 
 mockups: ## Sert les maquettes HTML (aperçu rapide sans Flutter)
 	@python3 docs/mockups/serve.py 8080

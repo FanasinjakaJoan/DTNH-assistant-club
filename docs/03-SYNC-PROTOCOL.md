@@ -23,6 +23,22 @@
         entité.syncState + syncedAt  →  UI (icône nuage)
 ```
 
+### 1.1 Déclencheurs de synchronisation
+
+La synchronisation ne dépend jamais d'une action manuelle du staff : quatre
+déclencheurs se complètent (implémentation : `SyncScheduler`).
+
+| Déclencheur | Moment | Rôle |
+|---|---|---|
+| Après une écriture | chaque saisie (pointage, paiement, joueur) | envoi rapide, regroupé par une temporisation courte (anti-rebond) |
+| Retour en ligne | transition hors-ligne → ligne | vide la file accumulée pendant la coupure réseau |
+| Reprise de l'application | l'app revient au premier plan | rattrape ce qui a été saisi pendant que l'app était en arrière-plan |
+| Filet de sécurité périodique | toutes les quelques minutes | garantit qu'aucune donnée ne reste bloquée par un déclenchement manqué |
+
+Les déclencheurs sont **coalescés** : si un envoi est déjà en cours, une
+nouvelle demande n'ouvre pas un second envoi concurrent, elle est fusionnée
+avec le suivant. Un seul envoi peut donc traiter plusieurs saisies.
+
 ## 2. Machine à états de la file
 
 ```
@@ -120,6 +136,34 @@ métier) : c'est ce qui permet un succès partiel propre.
 
 Cas dégradé : si le serveur répond `ok: true` sans `results`, tous les items du
 lot sont considérés comme traités (compatibilité avec un webhook minimal).
+
+### 4.3 Payload `player` (roster)
+
+Depuis la v1.2, le roster se synchronise aussi (`entity: "player"`), avec la
+date de naissance qui sert à la catégorisation par âge :
+
+```json
+{
+  "id": "<uuid entité>",
+  "nom": "Rasoa Miora",
+  "categorie": "U14-U15",
+  "dateNaissance": "2012-04-17",
+  "numero": 7,
+  "telephone": "0340000000",
+  "actif": true,
+  "updatedAt": "2026-11-05T09:12:03.412Z"
+}
+```
+
+- `dateNaissance` est au format `yyyy-MM-dd` (jour local, sans fuseau) et vaut
+  `null` si le staff n'a pas saisi la date : le serveur écrit alors `NULL` en
+  base (`birth_date`), il n'invente **jamais** de date.
+- Une date partielle ou mal formée est **rejetée** côté serveur (item en
+  `error`) plutôt que devinée : une date de naissance fausse fausserait la
+  catégorie d'âge du joueur.
+- Les téléphones portant encore un schéma Hive **v1** (sans date de naissance)
+  continuent d'envoyer des lots valides : la migration locale v1 → v2 remplit le
+  champ à `null` sans perte de données (voir `PlayerAdapter`).
 
 ## 5. Politique de tentatives
 

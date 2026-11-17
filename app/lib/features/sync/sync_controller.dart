@@ -1,3 +1,4 @@
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/errors/app_exception.dart';
@@ -42,7 +43,8 @@ final syncControllerProvider =
     NotifierProvider<SyncController, SyncRuntimeState>(SyncController.new);
 
 /// Orchestrateur côté UI : écoute le réseau, déclenche les envois, expose l'état.
-class SyncController extends Notifier<SyncRuntimeState> {
+class SyncController extends Notifier<SyncRuntimeState>
+    with WidgetsBindingObserver {
   SyncScheduler? _scheduler;
   bool _disposed = false;
 
@@ -50,12 +52,15 @@ class SyncController extends Notifier<SyncRuntimeState> {
   SyncRuntimeState build() {
     ref.onDispose(() {
       _disposed = true;
+      WidgetsBinding.instance.removeObserver(this);
       _scheduler?.dispose();
     });
 
     final scheduler = SyncScheduler(
       engine: ref.watch(syncEngineProvider),
       settings: ref.watch(settingsRepositoryProvider),
+      // Chaque écriture en file déclenche un envoi automatique.
+      queueChanges: ref.watch(syncQueueRepositoryProvider).watchCounters(),
     );
 
     scheduler
@@ -86,10 +91,20 @@ class SyncController extends Notifier<SyncRuntimeState> {
       };
 
     _scheduler = scheduler;
+    WidgetsBinding.instance.addObserver(this);
     // Démarrage non bloquant : l'UI ne doit jamais attendre le réseau.
     Future<void>.microtask(scheduler.start);
 
     return const SyncRuntimeState();
+  }
+
+  /// Reprise au premier plan : les minuteurs ont pu être suspendus par le
+  /// système pendant la veille, on relance donc un passage.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _scheduler?.onAppResumed();
+    }
   }
 
   /// Synchronisation manuelle (bouton « Synchroniser maintenant »).

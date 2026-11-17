@@ -64,9 +64,9 @@ class AttendanceDao {
 
   Stream<List<AttendanceEntry>> watchAll() async* {
     yield getAll();
-    await for (final store in _db.changes) {
-      if (store == DbStore.attendance) yield getAll();
-    }
+    // `yield*` (et non `await for`) : un `await for` en attente ne se
+    // laisse pas annuler, ce qui bloque `dispose()` de ses abonnés.
+    yield* _db.watch(DbStore.attendance).map((_) => getAll());
   }
 
   /// Statut d'un joueur pour une séance (utilisé par l'écran de pointage).

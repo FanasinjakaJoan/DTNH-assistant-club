@@ -69,9 +69,13 @@ const SCHEMAS = {
   },
   'Joueurs': {
     columns: [
-      'ID', 'Nom', 'Catégorie', 'Numéro', 'Téléphone', 'Actif', 'SyncTimestamp',
+      'ID', 'Nom', 'Catégorie', 'Date de naissance', 'Numéro', 'Téléphone',
+      'Actif', 'SyncTimestamp',
     ],
-    fields: ['id', 'nom', 'categorie', 'numero', 'telephone', 'actif', null],
+    fields: [
+      'id', 'nom', 'categorie', 'dateNaissance', 'numero', 'telephone', 'actif',
+      null,
+    ],
   },
 };
 

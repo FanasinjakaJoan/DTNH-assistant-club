@@ -138,7 +138,7 @@ async function upsert(
   return rows.length;
 }
 
-function mapAttendance(
+export function mapAttendance(
   data: Record<string, unknown>,
   userId: string | null,
 ): Record<string, unknown> | null {
@@ -164,7 +164,7 @@ function mapAttendance(
   };
 }
 
-function mapTransaction(
+export function mapTransaction(
   data: Record<string, unknown>,
   userId: string | null,
 ): Record<string, unknown> | null {
@@ -191,7 +191,7 @@ function mapTransaction(
   };
 }
 
-function mapPlayer(
+export function mapPlayer(
   data: Record<string, unknown>,
   userId: string | null,
 ): Record<string, unknown> | null {
@@ -202,6 +202,7 @@ function mapPlayer(
     id,
     full_name: name,
     category: str(data.categorie) ?? "NA",
+    birth_date: dateOnly(data.dateNaissance),
     jersey_number: num(data.numero),
     phone: str(data.telephone),
     is_active: bool(data.actif, true),
@@ -213,7 +214,7 @@ function mapPlayer(
   };
 }
 
-Deno.serve(async (request: Request): Promise<Response> => {
+const handleRequest = async (request: Request): Promise<Response> => {
   if (request.method === "OPTIONS") {
     return new Response("ok", { headers: CORS_HEADERS });
   }
@@ -376,4 +377,12 @@ Deno.serve(async (request: Request): Promise<Response> => {
     identity,
     results,
   });
-});
+};
+
+// Le service n'est pas ouvert lorsque les tests importent ce module
+// (`DTNH_DISABLE_SERVE=1 deno test ...`) : sans cette garde, `deno test`
+// laisserait un port ouvert. En production la variable est absente, donc la
+// fonction démarre normalement.
+if (Deno.env.get("DTNH_DISABLE_SERVE") !== "1") {
+  Deno.serve(handleRequest);
+}

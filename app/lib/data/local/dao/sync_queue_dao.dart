@@ -130,9 +130,9 @@ class SyncQueueDao {
 
   Stream<List<SyncQueueItem>> watchAll() async* {
     yield getAll();
-    await for (final store in _db.changes) {
-      if (store == DbStore.syncQueue) yield getAll();
-    }
+    // `yield*` (et non `await for`) : un `await for` en attente ne se
+    // laisse pas annuler, ce qui bloque `dispose()` de ses abonnés.
+    yield* _db.watch(DbStore.syncQueue).map((_) => getAll());
   }
 
   /// Propage l'état « synchronisé » aux entités métier (dénormalisation UI).

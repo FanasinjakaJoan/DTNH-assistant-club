@@ -314,8 +314,6 @@ Dans l'application : **Réglages > Synchronisation** doit afficher
 « Configuration du club active : rien à saisir. », puis
 **Tester la connexion** doit répondre « Supabase connecté (DTNH). ».
 
-En SQL (Dashboard Supabase > SQL Editor) :
-
 Le message diffère selon l'identité : « Supabase connecté (DTNH) — compte
 votre@email » si la session Google est reconnue, « Supabase connecté (DTNH). »
 si l'envoi est passé par le secret partagé.
@@ -380,6 +378,61 @@ select c.relname, p.polname, pg_get_expr(p.polqual, p.polrelid) as condition
 from pg_policy p join pg_class c on c.oid = p.polrelid
 where c.relname like 'dtnh_%' order by 1;
 ```
+
+---
+
+### 8.5 Déployer l'Edge Function & dépanner `BOOT_ERROR`
+
+Symptôme : l'application affiche « Synchronisation incomplète : Le serveur de
+synchronisation a refusé le lot (HTTP 503) : Function failed to start (please
+check logs) », et un `ping` direct répond :
+
+```json
+{"code":"BOOT_ERROR","message":"Function failed to start (please check logs)"}
+```
+
+Ce n'est **pas** une erreur de code. Le module du dépôt est valide — `deno
+check index.ts` passe et un lancement local répond 200. `BOOT_ERROR` signifie
+que la fonction est enregistrée côté Supabase mais que **son bundle n'a pas
+démarré** : déploiement interrompu depuis l'éditeur en ligne, CLI absent, ou
+premier démarrage sur un secret manquant.
+
+**Déploiement reproductible** (préféré à l'éditeur en ligne) :
+
+```bash
+# 1) jeton personnel : https://supabase.com/dashboard/account/tokens
+export SUPABASE_ACCESS_TOKEN=sbp_...
+
+# 2) le script vérifie le code, déploie, puis rejoue un ping réel
+make deploy-fn
+# équivalent : bash scripts/deploy_supabase_function.sh
+```
+
+Le script **échoue** si la fonction répond encore `BOOT_ERROR` après
+déploiement : un « deployed successfully » ne suffit pas.
+
+**Si `BOOT_ERROR` persiste** :
+
+```bash
+# Logs d'exécution de la fonction (cause exacte du non-démarrage)
+supabase functions logs dtnh-sync --project-ref osjsczvsnyknkdwbciab
+
+# Secrets attendus par la fonction (Project Settings > Edge Functions > Secrets)
+#   SUPABASE_URL                (injectée automatiquement par Supabase)
+#   SUPABASE_SERVICE_ROLE_KEY   (injectée automatiquement)
+#   DTNH_SHARED_SECRET          (à définir : secret partagé avec l'application)
+```
+
+Un secret `DTNH_SHARED_SECRET` absent ne provoque pas `BOOT_ERROR` (la fonction
+répond alors `401 Secret invalide`), mais un import non résolu au démarrage, si.
+Dans ce cas, redéployer depuis la CLI règle le problème dans la quasi-totalité
+des cas : le bundle est reconstruit à partir du dépôt, pas du cache de
+l'éditeur.
+
+**Contrôle côté application.** Depuis la v1.2, un HTTP 5xx remonte le message
+du serveur au lieu d'un simple « HTTP 503 » : le staff et le support voient
+immédiatement `BOOT_ERROR`, ce qui évite de chercher du côté du réseau ou du
+secret.
 
 ---
 

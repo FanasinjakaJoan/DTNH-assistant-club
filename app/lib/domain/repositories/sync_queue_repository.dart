@@ -42,6 +42,12 @@ abstract interface class SyncQueueRepository {
 
   Stream<List<SyncQueueItem>> watchAll();
 
+  /// Compteurs réactifs : émet à chaque écriture dans la file.
+  ///
+  /// Utilisé par le planificateur pour déclencher un envoi dès qu'une donnée
+  /// est mise en file, sans que le staff ait à presser un bouton.
+  Stream<SyncQueueCounters> watchCounters();
+
   Future<SyncQueueCounters> counters();
 
   Future<void> markSynced({

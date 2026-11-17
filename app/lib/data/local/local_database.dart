@@ -48,6 +48,14 @@ class LocalDatabase {
   /// `Stream` réactifs façon `watch()` de Drift).
   Stream<DbStore> get changes => _changes.stream;
 
+  /// Flux filtré sur un magasin, sûr à l'annulation.
+  ///
+  /// À préférer à un `await for (final store in changes)` dans un générateur
+  /// `async*` : l'annulation d'un `await for` en attente ne rend jamais la
+  /// main, ce qui bloque `dispose()` et laisse des abonnements zombies.
+  Stream<void> watch(DbStore store) =>
+      changes.where((changed) => changed == store);
+
   void notify(DbStore store) {
     if (!_changes.isClosed) _changes.add(store);
   }

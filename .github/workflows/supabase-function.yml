@@ -1,0 +1,113 @@
+# ============================================================================
+#  DTNH Assistant Club — déploiement de l'Edge Function Supabase `dtnh-sync`
+# ============================================================================
+#  Pourquoi ce workflow existe
+#  ---------------------------
+#  La synchronisation a été cassée en production par une fonction déployée en
+#  état `BOOT_ERROR` (HTTP 503 sur chaque requête) : le code du dépôt était
+#  pourtant valide. Sans pipeline, ce genre de dérive ne se voit qu'au moment
+#  où le staff tente de synchroniser.
+#
+#  Ce workflow vérifie d'abord le code (deno check + tests de mapping), puis
+#  déploie, puis **rejoue un ping réel** : un déploiement qui répond encore
+#  BOOT_ERROR fait échouer le job.
+#
+#  Prérequis (une seule fois)
+#  --------------------------
+#  Dépôt > Settings > Secrets and variables > Actions > New repository secret
+#      SUPABASE_ACCESS_TOKEN = sbp_... (https://supabase.com/dashboard/account/tokens)
+#  Optionnel : variable DTNH_SHARED_SECRET pour que le ping authentifié soit
+#  vérifié en bout de chaîne.
+#
+#  Tant que le secret n'est pas configuré, le job de déploiement est **ignoré**
+#  (les tests du code continuent de tourner) : le workflow n'échoue pas pour
+#  une raison d'administration.
+# ============================================================================
+name: Deploy Supabase Function
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/**'
+      - 'supabase/migrations/**'
+      - '.github/workflows/supabase-function.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/functions/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-function-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DENO_VERSION: '2.9.8'
+  FUNCTION_NAME: dtnh-sync
+  DTNH_SUPABASE_URL: >-
+    ${{ vars.DTNH_SUPABASE_URL || 'https://osjsczvsnyknkdwbciab.supabase.co' }}
+
+jobs:
+  verify:
+    name: Vérifier le code de la fonction
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: ${{ env.DENO_VERSION }}
+
+      - name: Typecheck
+        working-directory: supabase/functions/${{ env.FUNCTION_NAME }}
+        run: deno check index.ts
+
+      - name: Tests de mapping
+        working-directory: supabase/functions/${{ env.FUNCTION_NAME }}
+        env:
+          # Empêche `deno test` d'ouvrir le port du service.
+          DTNH_DISABLE_SERVE: '1'
+        run: deno test --allow-env .
+
+  deploy:
+    name: Déployer & vérifier le ping
+    needs: verify
+    # Uniquement sur main (jamais sur une PR), et si le jeton est configuré.
+    # Le contexte `secrets` n'étant pas disponible dans un `if` de job, la
+    # présence du jeton est testée dans une étape dédiée.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Vérifier la présence du jeton Supabase
+        id: token
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          if [ -n "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::SUPABASE_ACCESS_TOKEN non configuré : déploiement ignoré (voir l'en-tête de ce workflow)."
+          fi
+
+      - uses: supabase/setup-cli@v1
+        if: steps.token.outputs.configured == 'true'
+        with:
+          version: latest
+
+      # Le script fait tout : `deno check`, déploiement, puis un ping réel.
+      # Un déploiement qui répond encore BOOT_ERROR fait échouer le job.
+      - name: Déployer & vérifier le ping
+        if: steps.token.outputs.configured == 'true'
+        run: bash scripts/deploy_supabase_function.sh
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          DTNH_SHARED_SECRET: ${{ secrets.DTNH_SHARED_SECRET }}
