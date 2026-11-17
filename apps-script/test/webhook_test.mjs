@@ -20,6 +20,7 @@
  *  Sortie : code 0 si tout passe, 1 sinon (utilisable en CI).
  * ============================================================================
  */
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
@@ -92,6 +93,7 @@ class Sheet {
     this.rows.splice(row - 1, count);
   }
   setFrozenRows(n) { this.frozen = n; }
+  setColumnWidth() { return this; }
   hideSheet() { this.hidden = true; }
   showSheet() { this.hidden = false; }
   getDataRange() { return this.getRange(1, 1, Math.max(this.getLastRow(), 1), this.getMaxColumns()); }
@@ -116,8 +118,30 @@ class Spreadsheet {
 
 const spreadsheet = new Spreadsheet();
 const props = new Map();
+const cache = new Map();
 let lockHeld = false;
 let lastOutput = null;
+
+/** Faux Google `tokeninfo` : `validTokens` associe un jeton à son e-mail. */
+const validTokens = new Map();
+let tokenInfoCalls = 0;
+
+function urlFetch(url) {
+  const match = String(url).match(/id_token=([^&]+)/);
+  const token = match ? decodeURIComponent(match[1]) : '';
+  tokenInfoCalls += 1;
+  const email = validTokens.get(token);
+  if (!email) {
+    return {
+      getResponseCode: () => 400,
+      getContentText: () => '{"error":"invalid_token"}',
+    };
+  }
+  return {
+    getResponseCode: () => 200,
+    getContentText: () => JSON.stringify({ email: email, email_verified: 'true' }),
+  };
+}
 
 const sandbox = {
   console,
@@ -149,10 +173,13 @@ const sandbox = {
   },
   CacheService: {
     getScriptCache: () => ({
-      get: () => null,
-      put: () => {},
-      remove: () => {},
+      get: (k) => (cache.has(k) ? cache.get(k) : null),
+      put: (k, v) => { cache.set(k, v); },
+      remove: (k) => { cache.delete(k); },
     }),
+  },
+  UrlFetchApp: {
+    fetch: (url) => urlFetch(url),
   },
   ContentService: {
     MimeType: { JSON: 'application/json' },
@@ -165,6 +192,10 @@ const sandbox = {
     }),
   },
   Utilities: {
+    DigestAlgorithm: { SHA_256: 'SHA_256' },
+    computeDigest: (algorithm, value) => Array.from(
+      crypto.createHash('sha256').update(String(value)).digest()
+    ).map((byte) => (byte > 127 ? byte - 256 : byte)),
     getUuid: () => `uuid-${Math.random().toString(16).slice(2)}`,
     formatDate: (date, tz, fmt) => {
       const p = (n) => String(n).padStart(2, '0');
@@ -190,9 +221,16 @@ vm.runInContext(code, sandbox, { filename: 'Code.gs' });
 // ---------------------------------------------------------------- helpers --
 const H = { secrets: 'test-secret-123' };
 
-function post(body) {
-  const res = sandbox.doPost({ postData: { contents: JSON.stringify(body) } });
+function post(body, headers) {
+  const res = sandbox.doPost({
+    postData: { contents: JSON.stringify(body) },
+    headers: headers || {},
+  });
   return JSON.parse(res.content);
+}
+
+function postAs(token, body) {
+  return post(body, { Authorization: 'Bearer ' + token });
 }
 
 function sheetRows(name) {
@@ -366,6 +404,65 @@ r = post({ action: 'push', secret: H.secrets, deviceId: 'dev-1', batchId: 'b7', 
 const noBirthRow = sheetRows('Joueurs').find((line) => line[0] === 'p-0002');
 check('ligne écrite sans date', !!noBirthRow, sheetRows('Joueurs'));
 check('cellule date vide', noBirthRow[3] === '', noBirthRow);
+
+console.log('15) identité Google (aucun secret à saisir)');
+validTokens.set('jeton-coach', 'coach@dtnh.mg');
+props.set('ALLOWED_EMAILS', 'coach@dtnh.mg, tresorier@dtnh.mg');
+
+r = postAs('jeton-coach', { action: 'ping' });
+check('ping par identité Google', r.ok === true && r.identity === 'google', r);
+check('email renvoyé', r.email === 'coach@dtnh.mg', r.email);
+
+// Un lot sans `secret` mais avec un jeton Google valide doit passer.
+const googleAtt = { ...att, id: 'att-google-1', data: { ...att.data, id: 'att-google-1' } };
+r = postAs('jeton-coach', {
+  action: 'push',
+  deviceId: 'dev-google',
+  batchId: 'b-google',
+  items: [googleAtt],
+});
+check('push sans secret via Google', r.ok === true && r.results[0].status === 'ok', r);
+check(
+  'ligne écrite',
+  !!sheetRows('Présences').find((line) => line[0] === 'att-google-1'),
+  sheetRows('Présences').slice(-2),
+);
+
+// Jeton inconnu : refus explicite (pas de repli silencieux sur le secret).
+r = postAs('jeton-inconnu', { action: 'push', secret: H.secrets, items: [att] });
+check('jeton invalide refusé', r.ok === false && /invalide|expiré/i.test(r.message), r);
+
+// Compte Google valide mais hors liste d'accès.
+validTokens.set('jeton-intrus', 'inconnu@gmail.com');
+r = postAs('jeton-intrus', { action: 'ping' });
+check('compte non autorisé refusé', r.ok === false && /autoris/i.test(r.message), r);
+
+// Le cache évite un appel `tokeninfo` par requête.
+const callsBefore = tokenInfoCalls;
+r = postAs('jeton-coach', { action: 'ping' });
+check(
+  'jeton déjà vérifié mis en cache',
+  r.ok === true && tokenInfoCalls === callsBefore,
+  { tokenInfoCalls, callsBefore },
+);
+
+// Sans liste d'accès, un compte Google vérifié est accepté (rétro-compatible).
+props.delete('ALLOWED_EMAILS');
+validTokens.set('jeton-coach2', 'autre@dtnh.mg');
+r = postAs('jeton-coach2', { action: 'ping' });
+check('sans ALLOWED_EMAILS, Google suffit', r.ok === true && r.identity === 'google', r);
+
+// Le secret partagé reste un chemin valide (appareils non connectés).
+r = post({ action: 'ping', secret: H.secrets });
+check('secret historique toujours accepté', r.ok === true && r.identity === 'secret', r);
+
+console.log('16) publication de la configuration (action config côté Supabase)');
+sandbox.ScriptApp = { getService: () => ({ getUrl: () => 'https://script.google.com/macros/s/FAKE/exec' }) };
+const publishedSecret = sandbox.setup();
+const published = JSON.parse(props.get('CLUB_CONFIG'));
+check('setup publie la configuration', !!published && published.sheetId === 'fake-sheet-id', published);
+check('URL /exec publiée', /\/exec$/.test(published.webhookUrl), published.webhookUrl);
+check('secret cohérent avec setup()', published.webhookSecret === publishedSecret, publishedSecret);
 
 console.log('');
 console.log(failures === 0 ? 'TOUS LES TESTS PASSENT' : `${failures} ÉCHEC(S)`);

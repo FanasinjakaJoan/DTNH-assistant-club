@@ -127,6 +127,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                _ClubConfigBanner(settings: settings),
+                const SizedBox(height: 10),
                 for (final target in SyncTarget.values)
                   _SyncTargetTile(
                     target: target,
@@ -345,24 +347,33 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   /// Champs de la cible Supabase.
   ///
-  /// Les valeurs par défaut sont compilées dans l'application : le staff n'a
-  /// donc rien à saisir. Les champs restent modifiables pour pointer vers un
-  /// autre projet Supabase (utile en test ou pour un autre club).
+  /// La connexion Google suffit : l'appareil s'authentifie par le JWT de
+  /// session, aucun secret n'est requis. Les champs restent disponibles pour
+  /// pointer vers un autre projet Supabase (test, autre club) ou pour un
+  /// appareil volontairement non connecté.
   List<Widget> _buildSupabaseSection(
     BuildContext context,
     AppSettings settings,
   ) {
     final usingDefaults = settings.supabaseUrl.trim().isEmpty;
+    final auth = ref.watch(authControllerProvider);
     return [
       Row(
         children: [
-          const Icon(Icons.cloud_done_rounded, size: 18, color: AppColors.green),
+          Icon(
+            auth.isSignedIn ? Icons.verified_user_rounded : Icons.cloud_done_rounded,
+            size: 18,
+            color: AppColors.green,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              usingDefaults
-                  ? 'Configuration du club active : rien à saisir.'
-                  : 'Configuration personnalisée enregistrée sur cet appareil.',
+              auth.isSignedIn
+                  ? 'Connecté avec Google : les envois sont authentifiés par '
+                      'votre compte, aucun secret à saisir.'
+                  : usingDefaults
+                      ? 'Configuration du club active : rien à saisir.'
+                      : 'Configuration personnalisée enregistrée sur cet appareil.',
               style: const TextStyle(
                 fontSize: 11.5,
                 height: 1.4,
@@ -390,15 +401,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         autocorrect: false,
         decoration: const InputDecoration(
           labelText: 'Secret partagé (facultatif)',
-          hintText: 'Vide = secret compilé dans l\'application',
+          hintText: 'Inutile si vous êtes connecté avec Google',
           prefixIcon: Icon(Icons.key_rounded),
         ),
       ),
       const SizedBox(height: 10),
       const Text(
-        'Les données partent vers PostgreSQL (tables dtnh_*). L\'application '
-        'n\'embarque aucune clé Supabase : seul le secret de la fonction '
-        'dtnh-sync est utilisé.',
+        'Les données partent vers PostgreSQL (tables dtnh_*). Votre session '
+        'Google signe chaque envoi (author_id = votre compte) ; le secret '
+        'partagé ne sert qu\'aux appareils non connectés.',
         style: TextStyle(
           fontSize: 11,
           height: 1.45,
@@ -427,20 +438,50 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     ];
   }
 
-  /// Champs de la cible Google Sheets (webhook Apps Script historique).
+  /// Champs de la cible Google Sheets (webhook Apps Script).
+  ///
+  /// Rien n'est à saisir normalement : après la connexion Google, l'URL et le
+  /// secret sont distribués par l'Edge Function `dtnh-sync` (action `config`)
+  /// et affichés ci-dessous en lecture seule. Les champs restent modifiables
+  /// pour un appareil géré à la main.
   List<Widget> _buildAppsScriptSection(
     BuildContext context,
     AppSettings settings,
   ) {
+    final clubUrl = settings.clubWebhookUrl?.trim() ?? '';
+    final hasClubConfig = clubUrl.isNotEmpty;
     return [
+      if (hasClubConfig) ...[
+        Row(
+          children: [
+            const Icon(Icons.verified_rounded, size: 18, color: AppColors.green),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Configuration du club reçue automatiquement'
+                '${settings.clubConfigSyncedAt == null ? '' : ' (${settings.clubConfigSyncedAt!.dmy})'}'
+                ' : rien à saisir.',
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  height: 1.4,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+      ],
       TextField(
         controller: _urlController,
         keyboardType: TextInputType.url,
         autocorrect: false,
-        decoration: const InputDecoration(
+        decoration: InputDecoration(
           labelText: 'URL du déploiement (/exec)',
-          hintText: 'https://script.google.com/macros/s/AKfy…/exec',
-          prefixIcon: Icon(Icons.link_rounded),
+          hintText: clubUrl.isNotEmpty
+              ? clubUrl
+              : 'Reçue automatiquement après connexion Google',
+          prefixIcon: const Icon(Icons.link_rounded),
         ),
       ),
       const SizedBox(height: 12),
@@ -448,10 +489,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         controller: _secretController,
         obscureText: true,
         autocorrect: false,
-        decoration: const InputDecoration(
+        decoration: InputDecoration(
           labelText: 'Secret partagé',
-          hintText: 'Identique à SHARED_SECRET dans Apps Script',
-          prefixIcon: Icon(Icons.key_rounded),
+          hintText: hasClubConfig
+              ? 'Reçu du club (inutile si vous êtes connecté avec Google)'
+              : 'Identique à SHARED_SECRET dans Apps Script',
+          prefixIcon: const Icon(Icons.key_rounded),
         ),
       ),
       const SizedBox(height: 12),
@@ -485,10 +528,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
       const SizedBox(height: 10),
       const Text(
-        'Comment obtenir cette URL : extensions Apps Script, collez le '
-        'code fourni (dossier apps-script/), puis Déployer > Nouveau '
-        'déploiement > Application web > Exécuter en tant que moi > '
-        'Accès : Tout le monde. Copiez l\'URL /exec.',
+        'Rien à configurer en temps normal : après « Se connecter avec '
+        'Google », l\'URL et le secret du club sont récupérés automatiquement. '
+        'Les champs ci-dessus ne servent qu\'à un appareil administré à la '
+        'main (autre projet, test).',
         style: TextStyle(
           fontSize: 11,
           height: 1.45,
@@ -531,7 +574,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Future<void> _testConnection(BuildContext context) async {
     // On enregistre d'abord les champs de la cible active : tester une
-    // configuration non sauvegardée donnerait un faux négatif.
+    // configuration non sauvegardée donnerait un faux négatif. Un champ vide
+    // n'écrase rien : la configuration du club (ou le build) prend le relais —
+    // c'est le cas normal quand l'utilisateur s'est simplement connecté.
     final current = ref.read(settingsProvider);
     if (current.syncTarget == SyncTarget.supabase) {
       await ref.read(settingsProvider.notifier).saveSupabase(
@@ -546,11 +591,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           );
     }
     try {
-      final message = await ref.read(syncControllerProvider.notifier).testConnection();
+      final message =
+          await ref.read(syncControllerProvider.notifier).testConnection();
+      if (!mounted) return;
+      // Une session Google authentifie l'appel : on le dit explicitement, sinon
+      // le staff croit encore qu'un secret est nécessaire.
+      final hasSession =
+          await ref.read(appsScriptClientProvider).hasSession();
       if (!mounted) return;
       showAppSnack(
         context,
-        'Connexion établie : $message',
+        hasSession
+            ? 'Connexion établie (authentifié par la session Google) : $message'
+            : 'Connexion établie : $message',
         icon: Icons.wifi_tethering_rounded,
       );
     } catch (error) {
@@ -649,9 +702,122 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 }
 
+/// Bandeau d'état de la configuration du club.
+///
+/// Objectif : que le staff **comprenne en un coup d'œil** qu'il n'a rien à
+/// saisir. Trois situations :
+/// - connecté avec Google et configuration reçue → tout est prêt ;
+/// - connecté mais configuration pas encore reçue (hors-ligne) → repli local ;
+/// - non connecté → la configuration du club reste disponible si elle a déjà
+///   été reçue, sinon on invite à se connecter.
+class _ClubConfigBanner extends ConsumerWidget {
+  const _ClubConfigBanner({required this.settings});
+
+  final AppSettings settings;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final auth = ref.watch(authControllerProvider);
+    final status = ref.watch(clubConfigStatusProvider);
+    final isLoading = status.isLoading;
+    final outcome = status.outcome;
+
+    final IconData icon;
+    final Color color;
+    final Color background;
+    final String message;
+    String? actionLabel;
+    VoidCallback? onAction;
+
+    if (auth.isSignedIn && settings.isClubConfigFetched) {
+      icon = Icons.verified_rounded;
+      color = AppColors.green;
+      background = AppColors.greenSoft;
+      final date = settings.clubConfigSyncedAt;
+      message = 'Configuration du club reçue automatiquement'
+          '${date == null ? '' : ' le ${date.dmy}'} : '
+          'rien à saisir, la synchronisation part toute seule.';
+      actionLabel = isLoading ? null : 'Actualiser';
+      onAction = () => _refresh(context, ref);
+    } else if (auth.isSignedIn) {
+      icon = Icons.sync_rounded;
+      color = outcome == ClubConfigOutcome.unauthorized
+          ? AppColors.red
+          : AppColors.amber;
+      background =
+          outcome == ClubConfigOutcome.unauthorized ? AppColors.redSoft : AppColors.amberSoft;
+      message = outcome == ClubConfigOutcome.unauthorized
+          ? 'Session Google refusée par le serveur : reconnectez-vous pour '
+              'recevoir la configuration du club.'
+          : outcome == ClubConfigOutcome.offline
+              ? 'Hors-ligne : la configuration du club sera récupérée au '
+                  'prochain passage. Les valeurs locales sont utilisées en '
+                  'attendant.'
+              : 'Connexion Google active : récupération de la configuration '
+                  'du club…';
+      actionLabel = isLoading ? null : 'Réessayer';
+      onAction = () => _refresh(context, ref);
+    } else {
+      icon = Icons.login_rounded;
+      color = AppColors.blue;
+      background = AppColors.blueSoft;
+      message = settings.hasClubConfig
+          ? 'Mode local : la dernière configuration reçue du club est '
+              'utilisée. Connectez-vous pour la renouveler automatiquement.'
+          : 'Connectez-vous avec Google pour recevoir automatiquement la '
+              'configuration du club (aucune saisie nécessaire).';
+      actionLabel = 'Se connecter';
+      onAction = () => ref
+          .read(authControllerProvider.notifier)
+          .signInWithGoogle();
+    }
+
+    return InfoBanner(
+      message: message,
+      icon: icon,
+      color: color,
+      background: background,
+      actionLabel: actionLabel,
+      onAction: isLoading ? null : onAction,
+    );
+  }
+
+  Future<void> _refresh(BuildContext context, WidgetRef ref) async {
+    final outcome =
+        await ref.read(syncControllerProvider.notifier).refreshClubConfig();
+    if (!context.mounted) return;
+    final message = switch (outcome) {
+      ClubConfigOutcome.applied => 'Configuration du club actualisée.',
+      ClubConfigOutcome.appliedWithoutSheets =>
+        'Configuration du club à jour (cible Supabase).',
+      ClubConfigOutcome.notSignedIn => 'Connectez-vous avec Google d\'abord.',
+      ClubConfigOutcome.offline =>
+        'Serveur injoignable : les valeurs locales restent utilisées.',
+      ClubConfigOutcome.unauthorized =>
+        'Session expirée : reconnectez-vous avec Google.',
+      ClubConfigOutcome.failed =>
+        ref.read(clubConfigStatusProvider).error ??
+            'Configuration indisponible.',
+    };
+    showAppSnack(
+      context,
+      message,
+      icon: outcome == ClubConfigOutcome.applied ||
+              outcome == ClubConfigOutcome.appliedWithoutSheets
+          ? Icons.check_circle_rounded
+          : Icons.info_outline_rounded,
+      color: outcome == ClubConfigOutcome.applied ||
+              outcome == ClubConfigOutcome.appliedWithoutSheets
+          ? AppColors.green
+          : AppColors.navy,
+      duration: const Duration(seconds: 5),
+    );
+  }
+}
+
 /// Ligne de sélection de la cible de synchronisation.
 ///
-/// Réimplémentée à la main plutôt qu'avec `RadioListTile` : l'API `groupValue`
+/// Réimplémentée à la main plutôt que `RadioListTile` : l'API `groupValue`
 /// / `onChanged` de Flutter est dépréciée depuis 3.32 et deviendra caduque.
 class _SyncTargetTile extends StatelessWidget {
   const _SyncTargetTile({

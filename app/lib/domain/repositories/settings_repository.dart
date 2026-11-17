@@ -23,6 +23,21 @@ abstract interface class SettingsRepository {
   /// Change la cible active sans toucher aux paramètres de l'autre cible.
   Future<void> updateSyncTarget(SyncTarget target);
 
+  /// Enregistre la configuration du club reçue de l'Edge Function
+  /// (action `config`) : URL du webhook Apps Script, secret, ID du Sheet.
+  ///
+  /// Une `webhookUrl` vide efface la configuration du club (le club n'utilise
+  /// pas Google Sheets) ; la cible Supabase reste utilisable sans réglage.
+  Future<void> saveClubConfig({
+    required String webhookUrl,
+    required String webhookSecret,
+    String? sheetId,
+    DateTime? syncedAt,
+  });
+
+  /// Oublie la configuration du club (déconnexion, changement de compte).
+  Future<void> clearClubConfig();
+
   /// Mémorise le succès du dernier envoi (affiché dans l'écran Synchro).
   Future<void> recordSyncSuccess(DateTime at);
 

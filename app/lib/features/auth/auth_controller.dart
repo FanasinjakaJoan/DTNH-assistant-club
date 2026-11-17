@@ -135,10 +135,15 @@ class AuthController extends Notifier<AuthState> {
   }
 
   /// Déconnexion : l'application repasse en mode local (aucune donnée perdue).
+  ///
+  /// La configuration du club reçue du serveur est oubliée : elle a été
+  /// distribuée à un compte autorisé, elle ne doit pas rester lisible sur
+  /// l'appareil après déconnexion. Les réglages saisis à la main sont conservés.
   Future<void> signOut() async {
     state = state.copyWith(isLoading: true, clearError: true);
     try {
       await _service.signOut();
+      await ref.read(settingsProvider.notifier).forgetClubConfig();
       state = state.copyWith(isLoading: false, clearUser: true);
     } on AuthFailureException catch (error) {
       state = state.copyWith(isLoading: false, error: error.message);

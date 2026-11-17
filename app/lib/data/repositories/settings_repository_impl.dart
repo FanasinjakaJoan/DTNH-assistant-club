@@ -35,6 +35,10 @@ class SettingsRepositoryImpl implements SettingsRepository {
   static const String _kLastSyncAt = 'last_sync_at';
   static const String _kLastSyncError = 'last_sync_error';
   static const String _kSheetId = 'sheet_id';
+  static const String _kClubWebhookUrl = 'club_webhook_url';
+  static const String _kClubWebhookSecret = 'club_webhook_secret';
+  static const String _kClubSheetId = 'club_sheet_id';
+  static const String _kClubConfigSyncedAt = 'club_config_synced_at';
 
   @override
   AppSettings get current => _read();
@@ -60,6 +64,10 @@ class SettingsRepositoryImpl implements SettingsRepository {
       _kLastSyncAt: settings.lastSyncAt?.toIso8601String(),
       _kLastSyncError: settings.lastSyncError,
       _kSheetId: settings.sheetId,
+      _kClubWebhookUrl: settings.clubWebhookUrl,
+      _kClubWebhookSecret: settings.clubWebhookSecret,
+      _kClubSheetId: settings.clubSheetId,
+      _kClubConfigSyncedAt: settings.clubConfigSyncedAt?.toIso8601String(),
     });
     if (!_controller.isClosed) _controller.add(_read());
   }
@@ -93,6 +101,31 @@ class SettingsRepositoryImpl implements SettingsRepository {
       save(current.copyWith(syncTarget: target));
 
   @override
+  Future<void> saveClubConfig({
+    required String webhookUrl,
+    required String webhookSecret,
+    String? sheetId,
+    DateTime? syncedAt,
+  }) {
+    final url = webhookUrl.trim();
+    return save(
+      current.copyWith(
+        // Une URL vide côté serveur signifie « pas de Google Sheets pour ce
+        // club » : on efface l'ancien webhook au lieu de garder une cible
+        // fantôme, mais on horodate quand même la récupération (sinon l'appel
+        // `config` serait rejoué à chaque reprise de l'application).
+        clubWebhookUrl: url.isEmpty ? null : url,
+        clubWebhookSecret: webhookSecret.trim(),
+        clubSheetId: (sheetId ?? '').trim(),
+        clubConfigSyncedAt: syncedAt ?? DateTime.now(),
+      ),
+    );
+  }
+
+  @override
+  Future<void> clearClubConfig() => save(current.copyWith(clearClubConfig: true));
+
+  @override
   Future<void> recordSyncSuccess(DateTime at) => save(
         current.copyWith(lastSyncAt: at, clearLastSyncError: true),
       );
@@ -115,6 +148,7 @@ class SettingsRepositoryImpl implements SettingsRepository {
 
   AppSettings _read() {
     final lastSyncRaw = _box.get(_kLastSyncAt) as String?;
+    final clubSyncedRaw = _box.get(_kClubConfigSyncedAt) as String?;
 
     return AppSettings(
       syncTarget: SyncTarget.fromCode(_box.get(_kSyncTarget) as String?),
@@ -129,6 +163,11 @@ class SettingsRepositoryImpl implements SettingsRepository {
       lastSyncAt: lastSyncRaw == null ? null : DateTime.tryParse(lastSyncRaw),
       lastSyncError: _box.get(_kLastSyncError) as String?,
       sheetId: _box.get(_kSheetId) as String?,
+      clubWebhookUrl: _box.get(_kClubWebhookUrl) as String?,
+      clubWebhookSecret: _box.get(_kClubWebhookSecret) as String?,
+      clubSheetId: _box.get(_kClubSheetId) as String?,
+      clubConfigSyncedAt:
+          clubSyncedRaw == null ? null : DateTime.tryParse(clubSyncedRaw),
     );
   }
 }

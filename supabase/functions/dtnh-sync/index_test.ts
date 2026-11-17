@@ -11,11 +11,50 @@
  * ============================================================================
  */
 import {
+  buildClubConfig,
   mapAttendance,
   mapPlayer,
   mapTransaction,
 } from "./index.ts";
-import { assertEquals, assert } from "jsr:@std/assert@1";
+import { assertEquals, assert, assertExists } from "./asserts.ts";
+
+Deno.test("buildClubConfig : la config Sheets est distribuée", () => {
+  const body = buildClubConfig({
+    sheetsWebhookUrl: "https://script.google.com/macros/s/ABC/exec",
+    sheetsWebhookSecret: "secret-sheet",
+    sheetId: "sheet-1",
+    supabaseUrl: "https://example.supabase.co",
+    serverTime: "2026-11-17T08:00:00.000Z",
+    identity: "google",
+    userId: "user-uuid",
+  });
+  assertEquals(body.ok, true);
+  assertEquals(body.identity, "google");
+  assertEquals(body.userId, "user-uuid");
+  assertEquals(body.supabaseUrl, "https://example.supabase.co/functions/v1/dtnh-sync");
+  const sheets = body.sheets as Record<string, unknown>;
+  assertEquals(sheets.webhookUrl, "https://script.google.com/macros/s/ABC/exec");
+  assertEquals(sheets.webhookSecret, "secret-sheet");
+  assertEquals(sheets.sheetId, "sheet-1");
+  assertExists(body.serverTime);
+});
+
+Deno.test("buildClubConfig : sans webhook, réponse valide et sans secret", () => {
+  const body = buildClubConfig({
+    sheetsWebhookUrl: "  ",
+    sheetsWebhookSecret: "ne-doit-pas-fuiter",
+    sheetId: "",
+    supabaseUrl: "https://example.supabase.co",
+    serverTime: "2026-11-17T08:00:00.000Z",
+    identity: "google",
+    userId: null,
+  });
+  assertEquals(body.ok, true);
+  const sheets = body.sheets as Record<string, unknown>;
+  assertEquals(sheets.webhookUrl, null);
+  assertEquals(sheets.webhookSecret, null);
+  assertEquals(sheets.sheetId, null);
+});
 
 Deno.test("mapPlayer : la date de naissance devient birth_date", () => {
   const row = mapPlayer(
