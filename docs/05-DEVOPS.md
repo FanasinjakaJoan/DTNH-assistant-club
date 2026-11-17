@@ -462,10 +462,19 @@ par `deploy.yml` via `DTNH_SUPABASE_URL`, `DTNH_SUPABASE_ANON_KEY`,
 | Message | Cause | Correctif |
 | --- | --- | --- |
 | « non activée côté serveur » | provider Google désactivé dans Supabase | étape 9.2.3 |
+| Page JSON `{"code":400,"error_code":"validation_failed","msg":"Unsupported provider: provider is not enabled"}` (erreur « code 400 ») | même cause : le provider Google est désactivé, `/auth/v1/authorize` refuse la redirection | étape 9.2.3 (l'app détecte ce cas en amont et affiche un message dans l'écran de connexion au lieu de rediriger) |
 | `redirect_uri_mismatch` | URI de retour absente côté Google Cloud | ajouter `.../auth/v1/callback` |
 | « URL de retour non autorisée » | domaine absent des *Redirect URLs* Supabase | étape 9.2.4 |
 | `Unsupported provider: provider is not enabled` | même cause que la 1re ligne | étape 9.2.3 |
 | Popup fermée immédiatement | bloqueur de pop-up | autoriser les pop-ups du site |
+
+Diagnostic en une commande (remplacer `<anon-key>` par la clé publishable du
+projet) : `external.google` doit valoir `true` pour que la connexion marche.
+
+```bash
+curl -s "https://osjsczvsnyknkdwbciab.supabase.co/auth/v1/settings" \
+  -H "apikey: <anon-key>" | grep -o '"google":[a-z]*'
+```
 
 ---
 

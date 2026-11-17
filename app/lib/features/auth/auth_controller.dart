@@ -121,7 +121,10 @@ class AuthController extends Notifier<AuthState> {
       // Sur le web, la page est redirigée : l'état final arrive au rechargement
       // via le flux `onAuthStateChange`.
       state = state.copyWith(isLoading: false);
-    } on AuthFailureException catch (error) {
+    } on AppException catch (error) {
+      // `AuthFailureException` (échec du flux) comme
+      // `AuthConfigurationException` (fournisseur Google désactivé côté
+      // serveur) portent déjà un message affichable en français.
       state = state.copyWith(isLoading: false, error: error.message);
     } catch (error) {
       state = state.copyWith(

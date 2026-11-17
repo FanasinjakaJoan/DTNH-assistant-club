@@ -137,7 +137,11 @@ API aux identifiants OAuth) :
    Client Secret, enregistrer.
 
 Tant que ces deux étapes ne sont pas faites, seul le mode hors-ligne est
-disponible. Procédure détaillée, variables `DTNH_GOOGLE_CLIENT_ID` et dépannage :
+disponible. Si le bouton « Continuer avec Google » affiche une erreur **code
+400** (`Unsupported provider: provider is not enabled`), c'est le signe que
+l'étape 2 n'a pas encore été faite : l'application détecte ce cas avant la
+redirection et affiche le message dans l'écran de connexion. Procédure détaillée,
+variables `DTNH_GOOGLE_CLIENT_ID` et dépannage :
 [`docs/05-DEVOPS.md` § 9](docs/05-DEVOPS.md#9-comptes--connexion-google).
 
 ---
