@@ -166,6 +166,28 @@ void main() {
 
     test('un secret absent ne rend plus la synchronisation "non configuree"',
         () {
+      // Cible Apps Script sans `webhookSecret` ni `clubWebhookSecret` : c'est
+      // exactement l'état d'un membre connecté qui n'a rien saisi. `AppConfig`
+      // ne fournit ici aucun secret de repli (contrairement à Supabase, dont
+      // le secret compilé rend `isSecretMissing` faux — ce qui est correct).
+      const settings = AppSettings(
+        syncTarget: SyncTarget.appsScript,
+        webhookUrl: 'https://script.google.com/macros/s/CLUB/exec',
+        authorName: 'Coach Tojo',
+        authorId: 'user-uuid',
+      );
+
+      expect(settings.isSecretMissing, isTrue);
+      // …et pourtant la cible est utilisable : le JWT signe l'envoi.
+      expect(settings.hasSyncTarget, isTrue);
+      expect(settings.isConfigured, isTrue);
+    });
+
+    test('le secret compile de Supabase evite le mode hors-ligne', () {
+      // Vérifie l'assertion inverse : sur la cible Supabase, un secret de repli
+      // est compilé dans l'application, donc `isSecretMissing` est faux même
+      // sur un appareil neuf. Un test qui affirmerait le contraire contredirait
+      // `AppConfig.supabaseSyncSecret`.
       const settings = AppSettings(
         syncTarget: SyncTarget.supabase,
         supabaseUrl: 'https://example.supabase.co/functions/v1/dtnh-sync',
@@ -173,9 +195,9 @@ void main() {
         authorId: 'user-uuid',
       );
 
-      expect(settings.isSecretMissing, isTrue);
-      // La session Google suffit : la cible est utilisable.
-      expect(settings.hasSyncTarget, isTrue);
+      expect(AppConfig.supabaseSyncSecret.trim(), isNotEmpty);
+      expect(settings.activeSyncSecret, AppConfig.supabaseSyncSecret);
+      expect(settings.isSecretMissing, isFalse);
       expect(settings.isConfigured, isTrue);
     });
 
