@@ -8,7 +8,7 @@ l'application Flutter et **upsert** les lignes par ID.
 
 | Critère | Webhook Apps Script (retenu) | Google Sheets API directe |
 |---|---|---|
-| Authentification | 1 secret partagé, révocable en 1 clic | OAuth 2.0 + refresh token par appareil |
+| Authentification | **identité Google** (le membre est déjà connecté) ou 1 secret partagé révocable | OAuth 2.0 + refresh token par appareil |
 | Risque de fuite | L'app ne peut écrire que des lignes validées | Un token volé peut lire/écrire tout le Drive |
 | Configuration côté club | Coller un script, déployer | Créer un projet Google Cloud, activer l'API, gérer les consentements |
 | Contrôle serveur | Validation, journal, déduplication, quotas | Aucun (logique uniquement côté client) |
@@ -20,18 +20,69 @@ l'application Flutter et **upsert** les lignes par ID.
 3. Remplacer `appsscript.json` par [`appsscript.json`](./appsscript.json)
    (activer « Afficher le fichier de manifeste » dans les paramètres du projet).
 4. Exécuter la fonction **`setup`** une fois, autoriser les accès :
-   - crée les onglets `Présences`, `Transactions`, `Joueurs` et `_Journal` ;
-   - génère le `SHARED_SECRET` et l'affiche dans une popup.
+   - crée (ou met à jour) les onglets `Présences`, `Transactions`, `Joueurs`
+     et `_Journal` — y compris l'ajout de colonnes récentes comme
+     « Date de naissance » ;
+   - génère le `SHARED_SECRET` s'il n'existe pas ;
+   - publie la **fiche de configuration** (`URL`, secret, ID du classeur) et
+     l'affiche dans une popup.
 5. **Déployer → Nouveau déploiement → Application web**
    - Exécuter en tant que : **Moi**
    - Qui a accès : **Tout le monde**
    - Copier l'URL terminée par `/exec`.
-6. Dans l'application : **Réglages → Webhook Google Apps Script**, coller l'URL
-   et le secret, puis **Tester la connexion**.
+6. **Publier la configuration côté Supabase** (une seule fois, puis à chaque
+   fois que l'URL `/exec` change) :
+
+   ```sql
+   update public.dtnh_club_config
+      set sheets_webhook_url    = 'https://script.google.com/macros/s/<ID>/exec',
+          sheets_webhook_secret = '<SHARED_SECRET>',
+          sheet_id              = '<id du classeur>',
+          updated_by            = 'votre@email'
+    where id = 1;
+   ```
+
+   C'est la dernière étape de configuration manuelle de tout le projet. Elle
+   n'est **pas** à refaire par membre : chaque personne qui se connecte avec
+   Google reçoit automatiquement l'URL et le secret, et l'application les
+   utilise sans aucune saisie.
 
 > À chaque modification du script, créez un **nouveau déploiement** (ou
-> « Gérer les déploiements → Modifier → Version : Nouvelle version ») : l'URL
-> `/exec` reste identique.
+> « Gérer les déploiements → Modifier → Version : Nouvelle version »). Si l'URL
+> `/exec` change, refaites l'étape 6 : c'est une ligne de SQL, pas un
+> redéploiement de l'Edge Function.
+
+## Authentification : la connexion Google suffit
+
+Le webhook accepte **deux** preuves d'identité. Une seule est requise.
+
+| Preuve | Comment | Usage |
+|---|---|---|
+| **Jeton Google** | en-tête `Authorization: Bearer <id_token>` | chemin nominal : l'utilisateur est déjà connecté dans l'app |
+| **Secret partagé** | champ `secret` du corps JSON | appareil non connecté, secours, scripts |
+
+Vérification d'un jeton Google (`authenticate_` / `verifyGoogleToken_`) :
+
+1. appel `https://oauth2.googleapis.com/tokeninfo?id_token=<jeton>` ;
+2. réponse **200** exigée, e-mail présent, `email_verified` respecté ;
+3. si la propriété de script `ALLOWED_EMAILS` est définie (liste séparée par
+   des virgules), l'e-mail doit y figurer — sinon réponse
+   « compte non autorisé » ;
+4. résultat mis en cache 600 s dans `CacheService`, la clé étant un SHA-256 du
+   jeton (aucun jeton en clair dans le cache) ;
+5. **aucun repli silencieux** vers le secret quand un jeton invalide est
+   présenté : la requête est refusée. Un jeton expiré ne doit pas dégrader
+   l'authentification en douce.
+
+`ping` renvoie l'identité réellement reconnue, ce qui rend le diagnostic
+immédiat :
+
+```json
+{ "ok": true, "identity": "google", "email": "coach@dtnh.mg",
+  "serverTime": "2026-11-05T09:12:00.000Z", "message": "DTNH webhook actif" }
+```
+
+`identity` vaut `"google"` ou `"secret"`.
 
 ## Contrat d'API
 
@@ -141,8 +192,13 @@ comptée comme un succès) · `error` (avec un champ `error` lisible).
 
 ### `Joueurs`
 
-| ID | Nom | Catégorie | Numéro | Téléphone | Actif | SyncTimestamp |
-|---|---|---|---|---|---|---|
+| ID | Nom | Catégorie | Date de naissance | Numéro | Téléphone | Actif | SyncTimestamp |
+|---|---|---|---|---|---|---|---|
+
+« Date de naissance » est **nullable** : les fiches créées avant l'ajout de la
+colonne restent valides, la cellule est simplement vide. `setup()` réapplique
+les en-têtes sur une feuille existante, ce qui fait apparaître la colonne sans
+migration manuelle.
 
 ### `_Journal` (masqué)
 
@@ -157,7 +213,9 @@ toucher aux données métier.
 | `200` + `ok: true` | items marqués `SYNCED` |
 | `200` + `ok: false` et `results` partiels | items OK → `SYNCED`, les autres → `ERROR` |
 | `200` + `retryable: true` (verrou, quota) | tentatives incrémentées, backoff |
-| HTML / 401 / 403 | erreur non réessayable : message « vérifiez le déploiement » |
+| `401` / `403` (jeton Google invalide, secret faux) | erreur **non** réessayable, message « vérifiez le secret / le compte » |
+| `5xx` (Apps Script indisponible, `BOOT_ERROR`) | retenté, avec message incluant le détail serveur |
+| HTML inattendu (URL fausse, mauvais déploiement) | erreur non réessayable : message « vérifiez le déploiement » |
 
 ## Quotas à connaître
 
@@ -171,8 +229,9 @@ toucher aux données métier.
 ## Tester le webhook sans déployer
 
 `apps-script/test/webhook_test.mjs` exécute `Code.gs` dans Node en simulant les
-services Google (Sheet en mémoire, PropertiesService, LockService,
-ContentService). Aucune dépendance npm, aucun compte Google nécessaire :
+services Google (Sheet en mémoire, `PropertiesService`, `LockService`,
+`ContentService`, `CacheService`, `UrlFetchApp` et `Utilities.computeDigest`).
+Aucune dépendance npm, aucun compte Google nécessaire :
 
 ```bash
 node apps-script/test/webhook_test.mjs
@@ -181,9 +240,11 @@ node apps-script/test/webhook_test.mjs
 Le harnais vérifie le contrat réel du webhook : `ping`, secret invalide,
 création des en-têtes, upsert idempotent (un rejeu renvoie `duplicate` sans
 ajouter de ligne), mise à jour d'une ligne existante, opération `delete`,
-isolement d'un item invalide, garde-fou `MAX_ITEMS`, journal `_Journal` et
-réinjection de l'ID si le client l'oublie. Sortie code `0`/`1` : utilisable en
-CI avant de redéployer l'Apps Script.
+isolement d'un item invalide, garde-fou `MAX_ITEMS`, journal `_Journal`,
+réinjection de l'ID si le client l'oublie, **identité Google** (jeton valide,
+jeton inconnu, compte hors `ALLOWED_EMAILS`, cache des jetons, absence de
+`ALLOWED_EMAILS`) et publication de la configuration par `setup()`. Sortie code
+`0`/`1` : utilisable en CI avant de redéployer l'Apps Script.
 
 > Ce harnais a déjà détecté un bug réel : un client qui n'envoyait pas `id`
 > dans `data` produisait des lignes sans clé, donc non dédupliquées. `Code.gs`

@@ -55,6 +55,44 @@ class _FakeSettings implements SettingsRepository {
   Future<void> recordSyncFailure(String? error) async {}
 
   @override
+
+  Future<void> saveClubConfig({
+
+    required String webhookUrl,
+
+    required String webhookSecret,
+
+    String? sheetId,
+
+    DateTime? syncedAt,
+
+  }) async {
+
+    _settings = _settings.copyWith(
+
+      clubWebhookUrl: webhookUrl.trim().isEmpty ? null : webhookUrl.trim(),
+
+      clubWebhookSecret: webhookSecret,
+
+      clubSheetId: sheetId,
+
+      clubConfigSyncedAt: syncedAt ?? DateTime.now(),
+
+    );
+
+  }
+
+
+  @override
+
+  Future<void> clearClubConfig() async {
+
+    _settings = _settings.copyWith(clearClubConfig: true);
+
+  }
+
+
+  @override
   Stream<AppSettings> watch() => Stream<AppSettings>.value(_settings);
 }
 

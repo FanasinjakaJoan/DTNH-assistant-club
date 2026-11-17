@@ -9,8 +9,8 @@ aux administrateurs.
 > synchronisation (Supabase ou Google Sheets) est un effet de bord, jamais un
 > prérequis.
 
-**v1.2** — connexion Google (facultative) via Supabase Auth, synchronisation
-Supabase et installation PWA / APK depuis l'application.
+**v1.3** — configuration distribuée : se connecter avec Google suffit, aucune
+saisie. Synchronisation Supabase et installation PWA / APK depuis l'application.
 
 | Présences | Finances | Historique | Synchronisation |
 |---|---|---|---|
@@ -175,34 +175,72 @@ Hosting** (`firebase.json`) — voir le guide DevOps.
 
 ## Synchronisation (Supabase / Google Sheets)
 
-### A. Supabase — cible par défaut, zéro configuration
+### A. Pour l'utilisateur : se connecter avec Google, c'est tout
+
+Il n'y a **rien à saisir** dans l'application. Un membre qui se connecte avec
+son compte Google voit sa configuration de synchronisation arriver toute seule :
+
+- l'Edge Function `dtnh-sync` reconnaît le JWT de session ;
+- l'action `config` lui renvoie l'URL et le secret du webhook Sheets (si le club
+  en utilise un) + l'ID du classeur ;
+- l'application marque la configuration comme reçue et déclenche l'envoi des
+  éléments en attente.
+
+**Réglages → Synchronisation** affiche alors en vert
+« Configuration du club reçue automatiquement … : rien à saisir ». Le bandeau
+gère aussi les cas dégradés avec une action directe : hors-ligne, session
+expirée, ou « se connecter ».
+
+### B. Supabase — cible par défaut, zéro configuration
 
 1. Le schéma est déjà déployé (tables `dtnh_players`, `dtnh_attendance`,
-   `dtnh_transactions`, journal `dtnh_sync_log`, 2 vues d'agrégation). Version
-   SQL rejouable : [`supabase/migrations/20261105000000_dtnh_sync_schema.sql`](supabase/migrations/20261105000000_dtnh_sync_schema.sql).
+   `dtnh_transactions`, journal `dtnh_sync_log`, configuration du club
+   `dtnh_club_config`, 2 vues d'agrégation). Versions SQL rejouables :
+   [`supabase/migrations/`](supabase/migrations).
 2. L'Edge Function **`dtnh-sync`** reçoit les lots et écrit en PostgreSQL.
+   Actions : `ping` (diagnostic + identité), `config` (configuration du club),
+   `push` (upsert idempotent).
 3. L'application pointe dessus automatiquement (`lib/core/config/app_config.dart`).
-   **Réglages → Synchronisation → Tester la connexion** doit répondre
-   « Supabase connecté (DTNH). ».
+   **Tester la connexion** doit répondre
+   « Connexion établie (authentifié par la session Google) : … ».
 
 Sécurité : la clé `anon` seule ne lit rien. Un **membre connecté avec Google**
 lit les données du club (`SELECT` uniquement) ; les **écritures passent
-toujours** par l'Edge Function, qui contrôle le JWT ou le secret partagé,
-force `author_id = auth.uid()` et journalise le lot. Détails, policies et
-regénération du secret :
+toujours** par l'Edge Function, qui contrôle le JWT **ou** le secret partagé,
+force `author_id = auth.uid()` et journalise le lot. `dtnh_club_config` a la RLS
+activée sans policy : la configuration n'est lue que par la fonction, jamais par
+un navigateur. Détails, policies et regénération du secret :
 [`docs/05-DEVOPS.md` § 8](docs/05-DEVOPS.md#8-synchronisation-supabase).
 
-### B. Google Sheets — cible alternative (webhook Apps Script)
+### C. Google Sheets — cible alternative (webhook Apps Script)
+
+Opération d'administration, à faire **une seule fois** (pas par membre) :
 
 1. Ouvrir le Google Sheet du club → **Extensions → Apps Script**.
 2. Coller [`apps-script/Code.gs`](apps-script/Code.gs) (et
    [`appsscript.json`](apps-script/appsscript.json)).
 3. Exécuter la fonction **`setup`** : crée les onglets `Présences`,
-   `Transactions`, `Joueurs`, `_Journal` et génère le **secret partagé**.
+   `Transactions`, `Joueurs`, `_Journal`, génère le **secret partagé** et
+   publie la fiche de configuration.
 4. **Déployer → Nouveau déploiement → Application web**
    (Exécuter en tant que : *Moi*, Accès : *Tout le monde*) → copier l'URL `/exec`.
-5. Dans l'app : **Réglages → Synchronisation → Google Sheets**, coller l'URL +
-   le secret, puis **Tester la connexion**.
+5. Reporter l'URL et le secret dans la table de configuration du club :
+
+   ```sql
+   update public.dtnh_club_config
+      set sheets_webhook_url    = 'https://script.google.com/macros/s/<ID>/exec',
+          sheets_webhook_secret = '<SHARED_SECRET>',
+          sheet_id              = '<id du classeur>'
+    where id = 1;
+   ```
+
+   C'est une ligne de SQL, pas un redéploiement : utile car l'URL `/exec` change
+   dès qu'on crée un nouveau déploiement Apps Script.
+
+Le webhook accepte **l'identité Google** (`Authorization: Bearer <id_token>`,
+vérifié via `oauth2.googleapis.com/tokeninfo`) **ou** le secret partagé. Une
+liste optionnelle `ALLOWED_EMAILS` restreint les comptes acceptés. Détails :
+[`apps-script/README.md`](apps-script/README.md).
 
 ---
 

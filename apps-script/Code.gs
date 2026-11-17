@@ -14,17 +14,41 @@
  *         - Exécuter en tant que : Moi
  *         - Qui a accès : Tout le monde
  *       puis copier l'URL qui finit par /exec.
- *    5. Dans l'app : Réglages > Webhook (URL + secret) puis « Tester ».
+ *    5. Publier l'URL et le secret côté Supabase (secrets de la fonction
+ *       `dtnh-sync` : DTNH_SHEETS_WEBHOOK_URL / DTNH_SHEETS_WEBHOOK_SECRET)
+ *       pour que les membres n'aient rien à saisir : la configuration leur est
+ *       distribuée automatiquement après connexion Google.
  *
  *  Contrat d'API :
- *    POST { action: 'ping' | 'push', secret, deviceId, batchId, items: [...] }
+ *    POST { action: 'ping' | 'config' | 'push', secret, deviceId, batchId,
+ *           items: [...] }
  *    item  = { id, entity, sheet, operation: 'upsert'|'delete', data: {...} }
  *    réponse = { ok, message, serverTime, results: [{ id, sheet, status }] }
+ *
+ *  Authentification — deux chemins, comme l'Edge Function Supabase :
+ *    1. **Identité Google** (`Authorization: Bearer <JWT Google>`) : le jeton
+ *       d'identité Google est vérifié auprès de Google (`tokeninfo`), puis son
+ *       adresse e-mail doit figurer dans la propriété `ALLOWED_EMAILS`
+ *       (facultative pour rester rétro-compatible). C'est le mode nominal
+ *       depuis l'application : aucun secret à saisir.
+ *    2. **Secret partagé** (`payload.secret` = `SHARED_SECRET`) : mode
+ *       historique, conservé pour les appareils configurés avant la connexion
+ *       Google et pour les tests `curl`.
  * ============================================================================
  */
 
 /** Nom de la propriété de script qui contient le secret partagé. */
 const SECRET_PROPERTY = 'SHARED_SECRET';
+
+/** Emails autorisés à utiliser l'identité Google (séparés par des virgules). */
+const ALLOWED_EMAILS_PROPERTY = 'ALLOWED_EMAILS';
+
+/** Fiche de configuration publiée (lue par l'Edge Function `dtnh-sync`). */
+const CLUB_CONFIG_PROPERTY = 'CLUB_CONFIG';
+
+/** Cache des jetons Google déjà validés (évite un appel `tokeninfo` par lot). */
+const TOKEN_CACHE_PREFIX = 'dtnh-token-';
+const TOKEN_CACHE_TTL_SECONDS = 600;
 
 /** Onglet de journalisation technique (ne pas renommer). */
 const JOURNAL_SHEET = '_Journal';
@@ -115,6 +139,137 @@ function doGet(e) {
   });
 }
 
+/**
+ * Authentification d'une requête POST.
+ *
+ * @return {{ok: boolean, identity: ?string, email: ?string, message: ?string}}
+ *   `identity` vaut `'google'` (JWT vérifié) ou `'secret'` (secret partagé).
+ */
+function authenticate_(e, payload) {
+  // 1) Identité Google : en-tête `Authorization: Bearer <JWT>`.
+  const headers = (e && e.headers) || {};
+  const authorization = String(
+    headers.Authorization || headers.authorization || ''
+  );
+  if (authorization.toLowerCase().indexOf('bearer ') === 0) {
+    const result = verifyGoogleToken_(authorization.slice(7).trim());
+    if (result.ok) return result;
+    // Jeton présent mais invalide : on n'essaie même pas le secret (un client
+    // connecté ne doit pas retomber silencieusement sur un autre compte).
+    return result;
+  }
+
+  // 2) Secret partagé historique.
+  const expected = PropertiesService.getScriptProperties()
+    .getProperty(SECRET_PROPERTY);
+  if (!expected) {
+    return {
+      ok: false,
+      identity: null,
+      email: null,
+      message:
+        'SHARED_SECRET absent : exécutez la fonction setup() dans Apps Script.',
+    };
+  }
+  if (String((payload && payload.secret) || '') !== expected) {
+    return { ok: false, identity: null, email: null, message: 'Secret invalide.' };
+  }
+  return { ok: true, identity: 'secret', email: null, message: null };
+}
+
+/**
+ * Vérifie un jeton d'identité Google auprès de Google.
+ *
+ * La signature et l'expiration sont contrôlées par Google (`tokeninfo`) : ce
+ * script ne manipule aucune clé. Si `ALLOWED_EMAILS` est défini, l'adresse du
+ * jeton doit y figurer (liste d'accès du staff). Propriété absente = pas de
+ * liste, on fait confiance au compte Google qui a déployé la feuille.
+ */
+function verifyGoogleToken_(token) {
+  if (!token) {
+    return { ok: false, identity: null, email: null, message: 'Jeton vide.' };
+  }
+  const cache = CacheService.getScriptCache();
+  const cacheKey = TOKEN_CACHE_PREFIX + hash_(token);
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return { ok: true, identity: 'google', email: cached, message: null };
+  }
+
+  let info;
+  try {
+    const response = UrlFetchApp.fetch(
+      'https://oauth2.googleapis.com/tokeninfo?id_token=' +
+        encodeURIComponent(token),
+      { muteHttpExceptions: true }
+    );
+    if (response.getResponseCode() !== 200) {
+      return {
+        ok: false,
+        identity: null,
+        email: null,
+        message: 'Jeton Google invalide ou expiré.',
+      };
+    }
+    info = JSON.parse(response.getContentText());
+  } catch (error) {
+    return {
+      ok: false,
+      identity: null,
+      email: null,
+      message: 'Vérification du jeton Google impossible : ' + error,
+    };
+  }
+
+  const email = String(info.email || '').toLowerCase();
+  if (!email) {
+    return {
+      ok: false,
+      identity: null,
+      email: null,
+      message: 'Jeton Google sans adresse e-mail.',
+    };
+  }
+
+  const allowed = PropertiesService.getScriptProperties()
+    .getProperty(ALLOWED_EMAILS_PROPERTY);
+  if (allowed) {
+    const list = allowed
+      .split(',')
+      .map(function (value) {
+        return String(value).trim().toLowerCase();
+      })
+      .filter(function (value) {
+        return value !== '';
+      });
+    if (list.length > 0 && list.indexOf(email) === -1) {
+      return {
+        ok: false,
+        identity: null,
+        email: email,
+        message: 'Compte Google non autorisé pour ce club (' + email + ').',
+      };
+    }
+  }
+
+  cache.put(cacheKey, email, TOKEN_CACHE_TTL_SECONDS);
+  return { ok: true, identity: 'google', email: email, message: null };
+}
+
+/** Empreinte courte du jeton, pour la clé de cache (jamais le jeton en clair). */
+function hash_(value) {
+  const bytes = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    value
+  );
+  let out = '';
+  for (let i = 0; i < bytes.length; i++) {
+    const normalized = bytes[i] < 0 ? bytes[i] + 256 : bytes[i];
+    out += ('0' + normalized.toString(16)).slice(-2);
+  }
+  return out;
+}
+
 /** Réception des lots de synchronisation. */
 function doPost(e) {
   const receivedAt = new Date();
@@ -126,25 +281,22 @@ function doPost(e) {
     return json_({ ok: false, message: 'Corps JSON invalide : ' + error });
   }
 
-  const expected = PropertiesService.getScriptProperties()
-    .getProperty(SECRET_PROPERTY);
-  if (!expected) {
-    return json_({
-      ok: false,
-      message:
-        'SHARED_SECRET absent : exécutez la fonction setup() dans Apps Script.',
-    });
-  }
-  if (String(payload.secret || '') !== expected) {
-    journal_(payload, 0, 0, 0, 'REFUSÉ (secret invalide)', receivedAt);
-    return json_({ ok: false, message: 'Secret invalide.' });
+  const auth = authenticate_(e, payload);
+  if (!auth.ok) {
+    journal_(payload, 0, 0, 0, 'REFUSÉ (' + auth.message + ')', receivedAt);
+    return json_({ ok: false, message: auth.message });
   }
 
   const action = String(payload.action || 'push');
   if (action === 'ping') {
     return json_({
       ok: true,
-      message: 'DTNH webhook actif',
+      message:
+        auth.identity === 'google'
+          ? 'DTNH webhook actif — compte ' + auth.email + '.'
+          : 'DTNH webhook actif',
+      identity: auth.identity,
+      email: auth.email,
       serverTime: new Date().toISOString(),
     });
   }
@@ -288,7 +440,11 @@ function doPost(e) {
 
 /**
  * À exécuter UNE FOIS depuis l'éditeur Apps Script.
- * Crée les onglets, les en-têtes, le journal et génère le secret partagé.
+ *
+ * Crée (ou met à jour) les onglets et les en-têtes, le journal, génère le
+ * secret partagé **et publie la fiche de configuration du club** : URL `/exec`,
+ * secret et ID de la feuille. C'est cette fiche que l'Edge Function `dtnh-sync`
+ * distribue aux membres connectés, ce qui évite toute saisie manuelle.
  */
 function setup() {
   const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
@@ -298,6 +454,9 @@ function setup() {
     const sheet =
       spreadsheet.getSheetByName(name) ||
       spreadsheet.insertSheet(name);
+    // Ré-applique les en-têtes même sur une feuille existante : c'est ce qui
+    // fait apparaître les nouvelles colonnes (ex. « Date de naissance ») sans
+    // migration manuelle.
     ensureHeaders_(sheet, schema.columns);
     styleSheet_(sheet, schema.columns.length);
   });
@@ -311,10 +470,21 @@ function setup() {
     properties.setProperty(SECRET_PROPERTY, secret);
   }
 
+  const config = publishConfig_(secret);
+
   const message =
-    'Configuration terminée.\n\nSecret partagé :\n' +
+    'Configuration terminée.\n\n' +
+    'URL du webhook :\n' +
+    (config.webhookUrl || '(inconnue : déployez l\'application web)') +
+    '\n\nSecret partagé :\n' +
     secret +
-    '\n\nÀ recopier dans l\'application : Réglages > Webhook Google Apps Script.';
+    '\n\nÀ publier côté Supabase (secrets de la fonction dtnh-sync) :\n' +
+    '  DTNH_SHEETS_WEBHOOK_URL = URL ci-dessus\n' +
+    '  DTNH_SHEETS_WEBHOOK_SECRET = secret ci-dessus\n' +
+    '  DTNH_SHEET_ID = ' +
+    config.sheetId +
+    '\n\nLes membres n\'ont alors rien à saisir : la configuration leur est\n' +
+    'distribuée automatiquement après connexion Google.';
 
   try {
     SpreadsheetApp.getUi().alert(message);
@@ -324,12 +494,60 @@ function setup() {
   return secret;
 }
 
+/**
+ * Publie la fiche de configuration lue par l'Edge Function (`action: "config"`).
+ *
+ * La fiche est un JSON stocké dans une propriété de script : elle reste côté
+ * Google, n'est jamais exposée publiquement, et peut être mise à jour sans
+ * redéployer l'application (menu DTNH > Publier la configuration).
+ */
+function publishConfig_(secret) {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const config = {
+    webhookUrl: (ScriptApp.getService().getUrl() || ''),
+    webhookSecret: secret || '',
+    sheetId: spreadsheet.getId(),
+    sheetUrl: spreadsheet.getUrl(),
+    publishedAt: new Date().toISOString(),
+  };
+  PropertiesService.getScriptProperties().setProperty(
+    CLUB_CONFIG_PROPERTY,
+    JSON.stringify(config)
+  );
+  return config;
+}
+
+/**
+ * Menu « Publier la configuration » : régénère la fiche (après un nouveau
+ * déploiement de l'application web, l'URL `/exec` peut changer).
+ */
+function publishConfigFromMenu() {
+  const secret = PropertiesService.getScriptProperties().getProperty(
+    SECRET_PROPERTY
+  );
+  const config = publishConfig_(secret);
+  try {
+    SpreadsheetApp.getUi().alert(
+      'Configuration publiée.\n\nURL :\n' +
+        config.webhookUrl +
+        '\n\nRecopiez-la (avec le secret) dans les secrets de la fonction\n' +
+        'Supabase dtnh-sync, puis les membres seront configurés\nautomatiquement.' +
+        '\n\nRappel : après avoir modifié ce script, créez un nouveau\ndéploiement' +
+        ' de l\'application web pour que les changements soient actifs.'
+    );
+  } catch (error) {
+    Logger.log(JSON.stringify(config));
+  }
+  return config;
+}
+
 /** Menu pratique dans le Sheet. */
 function onOpen() {
   try {
     SpreadsheetApp.getUi()
       .createMenu('DTNH')
-      .addItem('Initialiser les onglets', 'setup')
+      .addItem('Initialiser les onglets et la configuration', 'setup')
+      .addItem('Publier la configuration du club', 'publishConfigFromMenu')
       .addItem('Afficher le secret', 'showSecret')
       .addItem('Purger le journal', 'clearJournal')
       .addToUi();

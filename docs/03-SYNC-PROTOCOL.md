@@ -15,13 +15,72 @@
                ┌────────────────────────┘
                ▼
       ┌─────────────────┐  4. POST lot JSON   ┌────────────────────┐
-      │   SyncEngine    │ ──────────────────► │ Google Apps Script │
-      │ (app Flutter)   │ ◄────────────────── │   → Google Sheet   │
-      └────────┬────────┘  5. résultats/item └────────────────────┘
-               │ 6. SYNCED / ERROR par item
-               ▼
-        entité.syncState + syncedAt  →  UI (icône nuage)
+      │   SyncEngine    │ ──────────────────► │ Edge Function      │
+      │ (app Flutter)   │ ◄────────────────── │ dtnh-sync          │
+      └────────┬────────┘  5. résultats/item │   → PostgreSQL     │
+               │ 6. SYNCED / ERROR par item  └────────────────────┘
+               ▼                                       │ ou
+        entité.syncState + syncedAt                     ▼
+        →  UI (icône nuage)                    ┌────────────────────┐
+                                               │ Webhook Apps Script│
+                                               │   → Google Sheet   │
+                                               └────────────────────┘
 ```
+
+### 1.0 Configuration : se connecter suffit
+
+**L'utilisateur n'a rien à configurer.** Il se connecte avec son compte Google
+et c'est tout : la session ouvre l'accès à la configuration du club, que
+l'application récupère automatiquement.
+
+```
+     Connexion Google réussie
+              │
+              ▼
+   POST /functions/v1/dtnh-sync   { "action": "config" }
+   Authorization: Bearer <jwt>
+              │
+              ▼
+   ┌─────────────────────────────────────┐
+   │ { ok: true,                         │
+   │   sheets: {                         │
+   │     webhookUrl:    "…/exec",        │   ← zéro saisie
+   │     webhookSecret: "…",             │
+   │     sheetId:       "1VuV…" } }      │
+   └─────────────────────────────────────┘
+              │
+              ▼
+   AppSettings.clubWebhookUrl / clubWebhookSecret / clubSheetId
+```
+
+D'où viennent ces valeurs ? D'une **ligne unique** de la base
+(`dtnh_club_config`), avec repli sur les secrets de la fonction :
+
+| Source | Modifiable sans redéploiement | Remarque |
+|---|---|---|
+| `public.dtnh_club_config` (ligne `id = 1`) | ✅ un simple `update` SQL | source nominale |
+| `DTNH_SHEETS_WEBHOOK_URL` / `_SECRET` / `DTNH_SHEET_ID` | ❌ nécessite un redéploiement | repli de compatibilité |
+| Saisie manuelle dans Réglages | ✅ | prioritaire, pour un appareil administré à la main |
+| Valeurs compilées (`AppConfig`) | ❌ | dernier repli hors-ligne |
+
+Une **URL vide** n'est pas une erreur : elle signifie « ce club synchronise
+tout vers PostgreSQL, sans Google Sheets ». L'application le traite comme un
+succès (`ClubConfigOutcome.appliedWithoutSheets`).
+
+### 1.0.1 Authentification : deux chemins, un seul obligatoire
+
+| Chemin | En-tête / champ | Quand | Obligatoire ? |
+|---|---|---|---|
+| **Session Google** | `Authorization: Bearer <jwt>` (+ `X-DTNH-Auth` en natif) | utilisateur connecté | non, mais c'est le mode nominal |
+| **Secret partagé** | `secret` dans le corps | appareil non connecté, hors-ligne, secours | non |
+
+Une requête est acceptée si **l'un des deux** est valide. C'est le correctif
+central : auparavant le secret était exigé *en plus*, si bien qu'un membre
+simplement connecté restait bloqué en « synchronisation non configurée ».
+
+Conséquence directe : `AppSettings.hasSyncTarget` ne teste plus que la présence
+d'une **URL**. La présence d'un secret est exposée séparément
+(`isSecretMissing`), mais ne bloque plus jamais un envoi.
 
 ### 1.1 Déclencheurs de synchronisation
 
@@ -197,26 +256,47 @@ date de naissance qui sert à la catégorisation par âge :
 | **Item envoyé deux fois dans le même lot** | Le serveur réserve l'ID virtuellement (`index[id] = -n`) ⇒ la 2ᵉ occurrence est traitée comme `duplicate`. |
 | **Horloge du téléphone fausse** | Le `SyncTimestamp` est **généré côté serveur** ; la date métier reste celle saisie par le staff. |
 | **Suppression d'une transaction** | Item `operation: delete` + payload `{id, deleted:true}` ; le serveur supprime la ligne. L'entité locale est supprimée immédiatement. |
-| **Webhook changé / secret tourné** | Réglages → nouveau secret → « Tester » ; les items en `ERROR` sont réessayés sans perte. |
+| **Webhook changé / secret tourné** | `update dtnh_club_config set sheets_webhook_url = …` (aucun redéploiement) ; les membres connectés reçoivent la nouvelle valeur au prochain passage. Items en `ERROR` réessayables sans perte. |
+| **Membre simplement connecté, aucun secret saisi** | Cas nominal : le JWT authentifie l'envoi. Avant correctif, cet état était (à tort) traité comme « non configuré ». |
+| **Configuration pas encore reçue (1er lancement hors-ligne)** | Repli sur les valeurs locales/compilées ; la récupération est retentée à la reprise de l'app et à chaque tentative de synchronisation (anti-rebond 60 s). |
 | **Fuseau horaire** | Dates métier au format `yyyy-MM-dd` (jour local) ; horodatages techniques en ISO UTC. |
 
 ## 7. Sécurité
 
-- **Aucun OAuth, aucune clé de service dans l'APK.** Le téléphone ne connaît
-  qu'une URL et un secret révocable.
-- Le secret vit dans les `Script Properties` du Sheet, pas dans le code.
-- Toutes les requêtes passent en **HTTPS** (Apps Script l'impose).
-- Le webhook refuse tout `POST` sans secret valide et journalise le refus dans
-  `_Journal` (appareil, lot, date).
+- **Aucune clé de service dans l'APK.** Le téléphone ne détient qu'une URL
+  publique et, éventuellement, un secret révocable.
+- **L'authentification nominale est la session Google** : le JWT est vérifié
+  par Supabase (`/auth/v1/user`) côté Edge Function, et par Google
+  (`oauth2.googleapis.com/tokeninfo`) côté Apps Script. Aucun de ces deux
+  serveurs ne fait confiance à une identité déclarée par le client.
+- Le secret Sheets vit dans les `Script Properties` du Sheet et, côté serveur,
+  dans `dtnh_club_config` (RLS **sans policy** : seule la clé de service y
+  accède) ou dans les secrets de fonction. Il n'est **jamais** dans le bundle
+  public : il n'est renvoyé qu'à une requête authentifiée, via `action: config`.
+- Toutes les requêtes passent en **HTTPS** (Apps Script l'impose, Supabase
+  aussi).
+- Côté Apps Script, une liste d'accès optionnelle (`ALLOWED_EMAILS`, séparée par
+  des virgules) restreint les comptes Google acceptés. Sans elle, tout compte
+  Google vérifié est accepté — utile pour un déploiement interne.
+- Les jetons Google déjà vérifiés sont mis en cache 600 s (`CacheService`),
+  ce qui évite un appel `tokeninfo` par requête sans affaiblir la vérification.
 - Le client n'émet **jamais** de requête vers un domaine autre que celui de
-  l'URL configurée par l'administrateur.
-- Rotation : `setup()` conserve le secret existant ; pour le changer, modifier la
-  propriété `SHARED_SECRET` puis mettre à jour les téléphones.
+  l'URL résolue (saisie locale, configuration du club, ou valeur compilée).
+- Rotation : mettre à jour `SHARED_SECRET` dans les `Script Properties` du
+  Sheet et `dtnh_club_config.sheets_webhook_secret` (ou le secret de fonction
+  correspondant). Les membres connectés n'ont rien à faire : ils reçoivent la
+  nouvelle valeur au prochain `action: config`. Les appareils non connectés
+  doivent ressaisir le secret.
 
 > ⚠️ Limite assumée : le secret est stocké dans la box Hive `settings_v1`
 > (non chiffrée). Pour un durcissement, remplacer `SettingsRepositoryImpl` par
 > une implémentation `flutter_secure_storage` — l'interface `SettingsRepository`
 > est déjà abstraite, aucun autre fichier ne change.
+>
+> La configuration reçue du club est **effacée à la déconnexion**
+> (`forgetClubConfig()`), pour qu'un appareil partagé ne conserve pas un secret
+> distribué à un compte autorisé. Les valeurs saisies à la main, elles, sont
+> conservées : elles appartiennent à l'appareil, pas au compte.
 
 ## 8. Supervision
 
@@ -234,7 +314,23 @@ Côté application, l'écran **Synchro** expose les mêmes informations : compte
 ## 9. Tests manuels (curl)
 
 ```bash
-# 1. Test de vie
+# 0. Edge Function Supabase : ping + configuration distribuée
+curl -s -X POST "https://osjsczvsnyknkdwbciab.supabase.co/functions/v1/dtnh-sync" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"ping","secret":"<DTNH_SHARED_SECRET>"}'
+
+curl -s -X POST "https://osjsczvsnyknkdwbciab.supabase.co/functions/v1/dtnh-sync" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"config","secret":"<DTNH_SHARED_SECRET>"}'
+# → {"ok":true,"sheets":{"webhookUrl":"…/exec","webhookSecret":"…","sheetId":"…"}}
+
+# Avec une session Google (chemin nominal, aucun secret requis) :
+curl -s -X POST "https://osjsczvsnyknkdwbciab.supabase.co/functions/v1/dtnh-sync" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <access_token>" \
+  -d '{"action":"config"}'
+
+# 1. Test de vie (Apps Script)
 curl -s "https://script.google.com/macros/s/<ID>/exec?secret=<SECRET>&action=ping"
 
 # 2. Envoi d'une ligne de présence

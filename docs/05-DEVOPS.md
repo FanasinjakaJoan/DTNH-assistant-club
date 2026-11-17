@@ -282,37 +282,83 @@ Réglages > Synchronisation dans l'application).
 | `dtnh_attendance` | une ligne par joueur et par séance |
 | `dtnh_transactions` | mouvements financiers (montants en Ariary entiers) |
 | `dtnh_sync_log` | journal des lots reçus (diagnostic « le téléphone a-t-il envoyé ? ») |
+| `dtnh_club_config` | **ligne unique** : configuration distribuée aux membres (URL et secret du webhook Sheets, ID du classeur) |
 | `dtnh_finance_summary` | vue : entrées/sorties/solde par mois |
 | `dtnh_attendance_summary` | vue : présents/absents/excusés par séance |
 | `dtnh_members` | vue : annuaire du staff connecté (nom, e-mail, avatar) |
-| Edge Function `dtnh-sync` | endpoint HTTPS appelé par l'application (v4) |
+| Edge Function `dtnh-sync` | endpoint HTTPS appelé par l'application (v5) : `ping`, `config`, `push` |
 
 Le schéma complet (rejouable à l'identique) est versionné dans
 `supabase/migrations/` :
-`20261105000000_dtnh_sync_schema.sql` (tables et vues) puis
-`20261106000000_dtnh_user_identity.sql` (identités, policies).
+`20261105000000_dtnh_sync_schema.sql` (tables et vues),
+`20261106000000_dtnh_user_identity.sql` (identités, policies),
+`20261117000000_dtnh_player_birth_date.sql` (`birth_date`) et
+`20261117010000_dtnh_club_config.sql` (configuration du club).
 La fonction est versionnée dans `supabase/functions/dtnh-sync/index.ts`.
+
+### 8.1.1 Configurer la cible Google Sheets (sans redéploiement)
+
+La configuration du club — URL `/exec` du webhook Apps Script, secret, ID du
+classeur — est distribuée aux membres par l'action `config`. Elle vit dans une
+**ligne unique** modifiable en SQL :
+
+```sql
+update public.dtnh_club_config
+   set sheets_webhook_url    = 'https://script.google.com/macros/s/<ID>/exec',
+       sheets_webhook_secret = '<SHARED_SECRET du script>',
+       sheet_id              = '<id du classeur>',
+       updated_by            = 'votre@email'
+ where id = 1;
+```
+
+Aucun redéploiement n'est nécessaire : le prochain `action: config` d'un membre
+renvoie les nouvelles valeurs. C'est le remède au piège classique de l'URL
+`/exec` qui change à chaque nouveau déploiement Apps Script.
+
+Pour connaître les valeurs : ouvrir le classeur, menu **DTNH > Initialiser les
+onglets et la configuration** (`setup()`), qui affiche l'URL et le secret et les
+publie aussi dans les propriétés du script.
+
+Laisser `sheets_webhook_url` à `NULL` est parfaitement valide : le club
+synchronise alors tout vers PostgreSQL, et l'application l'affiche comme une
+configuration normale (pas une erreur).
 
 **Sécurité** — deux chemins, un seul point d'écriture :
 
 | Qui | Lecture | Écriture |
 | --- | --- | --- |
 | Visiteur (clé `anon` seule) | **rien** (aucune policy) | rien |
-| Membre connecté avec Google | données du club (`SELECT` sur les 3 tables), son propre journal de lots | rien en direct |
+| Membre connecté avec Google | données du club (`SELECT` sur les 3 tables), son propre journal de lots, `config` | rien en direct |
 | Edge Function (`service_role`) | tout | tout, après contrôle du JWT **ou** du secret partagé |
 
 Les écritures ne passent **jamais** par un client : aucune policy
 `INSERT/UPDATE/DELETE` n'existe, ce qui garantit que tout lot est validé et
-journalisé par la fonction. Le JWT de session est présenté dans un en-tête
-`X-DTNH-Auth` (et non `Authorization`, réservé au préflight `apikey`), et
-l'`author_id` de chaque ligne est forcé à `auth.uid()` côté serveur — un client
-ne peut donc pas se faire passer pour quelqu'un d'autre.
+journalisé par la fonction. Le JWT de session est présenté dans l'en-tête
+standard `Authorization: Bearer <jwt>` (et, en natif, dupliqué dans
+`X-DTNH-Auth` pour compatibilité), et l'`author_id` de chaque ligne est forcé à
+`auth.uid()` côté serveur — un client ne peut donc pas se faire passer pour
+quelqu'un d'autre. `dtnh_club_config` a la RLS activée **sans policy** : seule
+la clé de service la lit, jamais un navigateur.
 
 ### 8.2 Vérifier que la synchronisation fonctionne
 
-Dans l'application : **Réglages > Synchronisation** doit afficher
-« Configuration du club active : rien à saisir. », puis
-**Tester la connexion** doit répondre « Supabase connecté (DTNH). ».
+Dans l'application : se connecter avec Google, puis
+**Réglages > Synchronisation** doit afficher en vert
+« Configuration du club reçue automatiquement le … : rien à saisir, la
+synchronisation part toute seule. », et **Tester la connexion** doit répondre
+« Connexion établie (authentifié par la session Google) : … ».
+
+Le bandeau couvre aussi les cas dégradés, avec une action directe :
+« récupération en cours », « hors-ligne, valeurs locales utilisées »,
+« session refusée, reconnectez-vous ».
+
+En ligne de commande (le secret compilé correspond à `DTNH_SHARED_SECRET`) :
+
+```bash
+curl -s -X POST "https://osjsczvsnyknkdwbciab.supabase.co/functions/v1/dtnh-sync" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"config","secret":"<DTNH_SHARED_SECRET>"}'
+```
 
 Le message diffère selon l'identité : « Supabase connecté (DTNH) — compte
 votre@email » si la session Google est reconnue, « Supabase connecté (DTNH). »
@@ -353,6 +399,11 @@ flutter build web --release \
 Les téléphones déjà installés continuent de fonctionner hors-ligne ; ils
 reprendront l'envoi après mise à jour de l'application (ou saisie du secret
 dans Réglages, qui surcharge la valeur compilée).
+
+**Membres connectés : rien à faire.** Leur envoi est authentifié par leur
+session Google, et le secret Sheets — s'il change — leur est redistribué par
+`action: config`. Seuls les appareils volontairement non connectés dépendent du
+secret partagé.
 
 ---
 

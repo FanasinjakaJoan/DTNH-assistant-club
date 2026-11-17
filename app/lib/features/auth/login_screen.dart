@@ -126,7 +126,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           const SizedBox(height: 4),
           const Text(
             'Connectez-vous avec le compte Google du club : votre nom sera '
-            'l\'auteur de chaque pointage et de chaque transaction.',
+            'l\'auteur de chaque pointage, et la configuration de '
+            'synchronisation (Supabase / Google Sheets) sera récupérée '
+            'automatiquement — aucune saisie nécessaire.',
             style: TextStyle(
               fontSize: 12,
               height: 1.4,

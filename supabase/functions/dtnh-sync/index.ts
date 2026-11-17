@@ -1,20 +1,36 @@
-// DTNH Assistant Club — Edge Function de synchronisation (v3).
+// DTNH Assistant Club — Edge Function de synchronisation (v4).
 //
 // Reçoit le même contrat que le webhook Google Apps Script (action + secret +
 // items nommés) mais écrit dans PostgreSQL (Supabase).
 //
+// Actions :
+//   - `ping`   : test de vie + identité reconnue ;
+//   - `config` : renvoie la configuration du club (URL `/exec` et secret du
+//                webhook Google Sheets, ID de la feuille) au membre authentifié.
+//                C'est ce qui permet à l'utilisateur de **simplement se
+//                connecter avec Google** : plus aucune saisie dans l'app, et
+//                plus aucun secret Sheets dans le bundle public ;
+//   - `push`   : upsert idempotent du lot dans PostgreSQL.
+//
 // Deux modes d'authentification, cumulables :
-//   1. **Session Google** (`X-DTNH-Auth: Bearer <jwt>`) : identité vérifiée,
+//   1. **Session Google** (`Authorization: Bearer <jwt>`, standard, et/ou
+//      `X-DTNH-Auth: Bearer <jwt>`, historique) : identité vérifiée,
 //      l'`author_id` de chaque ligne est rattaché à `auth.uid()`. C'est le mode
-//      privilégié dès qu'un membre est connecté.
-//   2. **Secret partagé** (~48 hex, `DTNH_SHARED_SECRET`) : mode hors-ligne
-//      historique, conservé pour que l'application reste utilisable sans compte.
+//      privilégié : une session suffit, aucun secret n'est requis.
+//   2. **Secret partagé** (`DTNH_SHARED_SECRET`) : mode hors-ligne historique,
+//      conservé pour que l'application reste utilisable sans compte.
 //
 // Une requête est acceptée si l'un des deux est valide. `verify_jwt` reste
 // désactivé : les navigateurs envoient le jeton dans un en-tête personnalisé
-// (pas via `Authorization`, réservé au préflight `apikey`).
+// (pas via `Authorization`, réservé au préflight `apikey`) et l'appareil non
+// connecté n'a pas de JWT du tout.
 //
-// Déploiement : fonctions Supabase, slug `dtnh-sync`.
+// Déploiement : fonctions Supabase, slug `dtnh-sync`. Secrets attendus :
+//   DTNH_SHARED_SECRET        (repli appareil non connecté)
+//   DTNH_SHEETS_WEBHOOK_URL   (publiée par Apps Script > setup())
+//   DTNH_SHEETS_WEBHOOK_SECRET
+//   DTNH_SHEET_ID             (facultatif, informatif)
+//   DTNH_ALLOWED_ORIGINS      (facultatif, liste CORS ; défaut : *)
 
 const SHARED_SECRET = Deno.env.get("DTNH_SHARED_SECRET") ?? "";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
@@ -22,14 +38,28 @@ const SERVICE_KEY =
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ??
   Deno.env.get("SUPABASE_SECRET_KEY") ??
   "";
+const SHEETS_WEBHOOK_URL = Deno.env.get("DTNH_SHEETS_WEBHOOK_URL") ?? "";
+const SHEETS_WEBHOOK_SECRET = Deno.env.get("DTNH_SHEETS_WEBHOOK_SECRET") ?? "";
+const SHEET_ID = Deno.env.get("DTNH_SHEET_ID") ?? "";
+const ALLOWED_ORIGINS = (Deno.env.get("DTNH_ALLOWED_ORIGINS") ?? "*")
+  .split(",")
+  .map((value) => value.trim())
+  .filter((value) => value !== "");
 
-const CORS_HEADERS: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-dtnh-auth",
-  "Access-Control-Max-Age": "86400",
-};
+function corsHeaders(origin: string | null): Record<string, string> {
+  const allowAll = ALLOWED_ORIGINS.includes("*") || ALLOWED_ORIGINS.length === 0;
+  const allowed = allowAll || (origin !== null && ALLOWED_ORIGINS.includes(origin));
+  return {
+    "Access-Control-Allow-Origin": allowed ? (allowAll ? "*" : origin ?? "*") : "null",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers":
+      "authorization, x-client-info, apikey, content-type, x-dtnh-auth",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin",
+  };
+}
+
+const CORS_HEADERS: Record<string, string> = corsHeaders(null);
 
 interface SyncItem {
   id?: string;
@@ -48,10 +78,17 @@ interface SyncPayload {
   items?: SyncItem[];
 }
 
-function json(body: unknown, status = 200): Response {
+function json(
+  body: unknown,
+  status = 200,
+  origin: string | null = null,
+): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...CORS_HEADERS, "Content-Type": "application/json; charset=utf-8" },
+    headers: {
+      ...(origin === null ? CORS_HEADERS : corsHeaders(origin)),
+      "Content-Type": "application/json; charset=utf-8",
+    },
   });
 }
 
@@ -97,6 +134,19 @@ function dbHeaders(extra: Record<string, string> = {}): Record<string, string> {
 }
 
 /**
+ * Extrait le JWT d'un en-tête `Bearer <jwt>` (insensible à la casse).
+ *
+ * Renvoie une chaîne vide si l'en-tête est absent ou mal formé : l'appelant
+ * retombe alors sur le secret partagé.
+ */
+function bearerToken(header: string | null): string {
+  if (!header) return "";
+  const text = header.trim();
+  if (!text.toLowerCase().startsWith("bearer ")) return "";
+  return text.slice(7).trim();
+}
+
+/**
  * Vérifie le JWT présenté et renvoie l'identifiant Supabase (`sub`), ou `null`.
  * On interroge `/auth/v1/user` : la vérification de signature et d'expiration
  * reste faite par Supabase, jamais par ce code.
@@ -111,6 +161,41 @@ async function resolveUser(token: string): Promise<{ id: string; email: string |
     const id = str(user?.id);
     if (!id) return null;
     return { id, email: str(user?.email) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Configuration du club telle que la voient les clients.
+ *
+ * Ordre de priorité : ligne `dtnh_club_config` (modifiable en SQL, sans
+ * redéploiement) puis variables d'environnement (compatibilité avec les
+ * déploiements existants). Une table absente n'est pas une erreur : on retombe
+ * silencieusement sur l'environnement.
+ */
+interface ClubConfigSource {
+  webhookUrl: string;
+  webhookSecret: string;
+  sheetId: string;
+}
+
+async function readClubConfigFromDb(): Promise<ClubConfigSource | null> {
+  if (!SUPABASE_URL || !SERVICE_KEY) return null;
+  try {
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/dtnh_club_config?id=eq.1&select=sheets_webhook_url,sheets_webhook_secret,sheet_id`,
+      { headers: dbHeaders() },
+    );
+    if (!response.ok) return null;
+    const rows = await response.json();
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+    const row = rows[0] as Record<string, unknown>;
+    return {
+      webhookUrl: str(row.sheets_webhook_url) ?? "",
+      webhookSecret: str(row.sheets_webhook_secret) ?? "",
+      sheetId: str(row.sheet_id) ?? "",
+    };
   } catch {
     return null;
   }
@@ -214,6 +299,46 @@ export function mapPlayer(
   };
 }
 
+export interface ClubConfigInput {
+  sheetsWebhookUrl: string;
+  sheetsWebhookSecret: string;
+  sheetId: string;
+  supabaseUrl: string;
+  serverTime: string;
+  identity: string;
+  userId: string | null;
+}
+
+/**
+ * Construit la réponse `action: "config"`.
+ *
+ * Fonction **pure** (aucun accès réseau) : elle ne renvoie un secret de webhook
+ * que si le serveur en possède un. Quand `DTNH_SHEETS_WEBHOOK_URL` est vide, la
+ * réponse est valide et indique simplement que le club synchronise tout vers
+ * PostgreSQL — l'application ne doit pas traiter ce cas comme une erreur.
+ */
+export function buildClubConfig(input: ClubConfigInput): Record<string, unknown> {
+  const sheetsConfigured = str(input.sheetsWebhookUrl) !== null;
+  return {
+    ok: true,
+    message: sheetsConfigured
+      ? "Configuration du club disponible."
+      : "Configuration du club : cible Supabase uniquement.",
+    serverTime: input.serverTime,
+    target: "supabase",
+    identity: input.identity,
+    userId: input.userId,
+    supabaseUrl: input.supabaseUrl
+      ? `${input.supabaseUrl}/functions/v1/dtnh-sync`
+      : null,
+    sheets: {
+      webhookUrl: sheetsConfigured ? str(input.sheetsWebhookUrl) : null,
+      webhookSecret: sheetsConfigured ? str(input.sheetsWebhookSecret) : null,
+      sheetId: str(input.sheetId),
+    },
+  };
+}
+
 const handleRequest = async (request: Request): Promise<Response> => {
   if (request.method === "OPTIONS") {
     return new Response("ok", { headers: CORS_HEADERS });
@@ -233,10 +358,12 @@ const handleRequest = async (request: Request): Promise<Response> => {
   }
 
   // --- Authentification : session Google d'abord, secret partagé ensuite ----
-  const authHeader = request.headers.get("x-dtnh-auth") ?? "";
-  const bearer = authHeader.toLowerCase().startsWith("bearer ")
-    ? authHeader.slice(7).trim()
-    : "";
+  // Deux en-têtes sont acceptés pour le JWT : `Authorization` (standard, utilisé
+  // par le web) et `X-DTNH-Auth` (historique, natif). C'est ce qui rend la
+  // connexion Google suffisante : aucun secret n'est nécessaire.
+  const bearer = bearerToken(
+    request.headers.get("authorization") ?? request.headers.get("x-dtnh-auth"),
+  );
   const user = bearer ? await resolveUser(bearer) : null;
 
   const secretOk =
@@ -245,8 +372,13 @@ const handleRequest = async (request: Request): Promise<Response> => {
   if (!user && !secretOk) {
     if (!SHARED_SECRET) {
       return json(
-        { ok: false, message: "DTNH_SHARED_SECRET n'est pas configuré et aucune session valide n'a été présentée." },
-        500,
+        {
+          ok: false,
+          message:
+            "Session Google absente ou expirée, et DTNH_SHARED_SECRET n'est pas " +
+            "configuré. Connectez-vous avec Google pour synchroniser.",
+        },
+        401,
       );
     }
     return json(
@@ -259,6 +391,8 @@ const handleRequest = async (request: Request): Promise<Response> => {
       401,
     );
   }
+
+  const origin = request.headers.get("origin");
 
   const userId = user?.id ?? null;
   const identity = user ? "google" : "secret";
@@ -277,6 +411,28 @@ const handleRequest = async (request: Request): Promise<Response> => {
       userId,
       tables: ["dtnh_players", "dtnh_attendance", "dtnh_transactions"],
     });
+  }
+
+  // --- Configuration du club -------------------------------------------------
+  // Distribuée uniquement à une requête authentifiée (session Google ou secret).
+  // C'est ce qui permet à l'utilisateur de simplement se connecter : l'app
+  // reçoit l'URL et le secret du webhook Sheets sans aucune saisie, et ces
+  // valeurs ne sont jamais présentes dans un bundle public.
+  if (action === "config") {
+    const stored = await readClubConfigFromDb();
+    return json(
+      buildClubConfig({
+        sheetsWebhookUrl: stored?.webhookUrl || SHEETS_WEBHOOK_URL,
+        sheetsWebhookSecret: stored?.webhookSecret || SHEETS_WEBHOOK_SECRET,
+        sheetId: stored?.sheetId || SHEET_ID,
+        supabaseUrl: SUPABASE_URL,
+        serverTime,
+        identity,
+        userId,
+      }),
+      200,
+      origin,
+    );
   }
 
   if (action !== "push") {

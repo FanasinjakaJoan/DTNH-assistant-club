@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 
+import '../../core/config/app_config.dart';
 import '../../core/errors/app_exception.dart';
 import '../../domain/entities/sync_queue_item.dart';
 import '../auth/auth_token_source.dart';
@@ -91,6 +92,60 @@ class SheetBatchResponse {
   }
 }
 
+/// Configuration du club renvoyée par l'Edge Function (`action: "config"`).
+///
+/// Elle est **distribuée aux membres authentifiés** : le secret du webhook
+/// Apps Script ne figure plus dans le bundle public, il n'est lisible que par
+/// un compte Google autorisé. `webhookUrl == null` signifie « pas de cible
+/// Sheets pour ce club » (tout passe par Supabase).
+class ClubConfig {
+  const ClubConfig({
+    this.target,
+    this.supabaseUrl,
+    this.webhookUrl,
+    this.webhookSecret,
+    this.sheetId,
+    this.serverTime,
+    this.identity,
+  });
+
+  /// Cible recommandée par le club (`SUPABASE` / `APPS_SCRIPT`), information.
+  final String? target;
+
+  /// Endpoint Supabase renvoyé par le serveur (informatif).
+  final String? supabaseUrl;
+
+  /// URL `/exec` du webhook Apps Script, ou `null`.
+  final String? webhookUrl;
+
+  /// Secret partagé du webhook Apps Script, ou `null`.
+  final String? webhookSecret;
+
+  /// Identifiant du Google Sheet du club.
+  final String? sheetId;
+
+  final DateTime? serverTime;
+
+  /// Identité reconnue par le serveur (`google` ou `secret`).
+  final String? identity;
+
+  bool get hasSheets => (webhookUrl?.trim().isNotEmpty ?? false);
+
+  factory ClubConfig.fromJson(Map<String, dynamic> json) {
+    final sheets = json['sheets'];
+    final sheetMap = sheets is Map ? Map<String, dynamic>.from(sheets) : null;
+    return ClubConfig(
+      target: json['target']?.toString(),
+      supabaseUrl: json['supabaseUrl']?.toString(),
+      webhookUrl: sheetMap?['webhookUrl']?.toString(),
+      webhookSecret: sheetMap?['webhookSecret']?.toString(),
+      sheetId: sheetMap?['sheetId']?.toString(),
+      serverTime: DateTime.tryParse((json['serverTime'] ?? '').toString()),
+      identity: json['identity']?.toString(),
+    );
+  }
+}
+
 /// Client HTTP des cibles de synchronisation.
 ///
 /// **Un seul contrat pour deux backends** : l'Edge Function Supabase
@@ -156,6 +211,44 @@ class AppsScriptClient {
     return response;
   }
 
+  /// Récupère la configuration du club auprès de l'Edge Function
+  /// (`action: "config"`).
+  ///
+  /// Ne requiert **aucune saisie utilisateur** : le JWT de la session Google,
+  /// présenté dans `Authorization` et `X-DTNH-Auth`, suffit. C'est ce qui
+  /// permet à un membre simplement connecté de recevoir l'URL et le secret du
+  /// webhook Sheets (qui ne sont donc plus dans le bundle public).
+  ///
+  /// Le secret partagé est joint quand il existe (appareil non connecté), mais
+  /// n'est jamais exigé : la session Google est le chemin nominal.
+  Future<ClubConfig> fetchClubConfig({
+    required String webhookUrl,
+    String secret = '',
+  }) async {
+    final uri = Uri.tryParse(webhookUrl.trim());
+    if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
+      throw const SyncConfigurationException(
+        'URL de synchronisation invalide : impossible de récupérer la '
+        'configuration du club.',
+      );
+    }
+    final body = jsonEncode(<String, dynamic>{
+      'action': 'config',
+      if (secret.trim().isNotEmpty) 'secret': secret.trim(),
+      'sentAt': DateTime.now().toUtc().toIso8601String(),
+    });
+    final json = await _postJson(uri, body);
+    if (json['ok'] != true) {
+      throw SyncTransportException(
+        (json['message'] ?? 'Configuration du club indisponible.').toString(),
+        isRetryable: false,
+      );
+    }
+    // Réponse valide, même sans cible Sheets : ce n'est pas une erreur, le
+    // club synchronise alors tout vers PostgreSQL.
+    return ClubConfig.fromJson(json);
+  }
+
   /// Test de connectivité + validation du secret depuis l'écran Réglages.
   Future<String> ping({
     required String webhookUrl,
@@ -182,31 +275,65 @@ class AppsScriptClient {
 
   /// En-têtes de la requête.
   ///
-  /// Le JWT de la session Google est ajouté **s'il existe** : l'Edge Function
-  /// l'utilise pour rattacher la ligne à `auth.uid()` ; le webhook Apps Script
-  /// l'ignore. Sans session (mode hors-ligne), l'en-tête est absent et le
-  /// secret partagé assure seul l'authentification.
+  /// Le JWT de la session Google est ajouté **s'il existe**, sur deux en-têtes :
+  ///
+  /// - `Authorization: Bearer <jwt>` — l'en-tête standard, compris par
+  ///   Supabase (Edge Function avec `verify_jwt`) **et** par Apps Script
+  ///   (`ScriptApp.getIdentityToken()` / validation via `tokeninfo`) ;
+  /// - `X-DTNH-Auth: Bearer <jwt>` — conservé pour la compatibilité avec les
+  ///   versions déjà déployées de la fonction `dtnh-sync`, et parce que
+  ///   certains préflights CORS réécrivent `Authorization` (réservé à
+  ///   `apikey` dans le client Supabase web).
+  ///
+  /// Sans session (mode hors-ligne), les en-têtes sont absents et le secret
+  /// partagé assure seul l'authentification.
   Future<Map<String, String>> _headers() async {
     final headers = <String, String>{
-      // Sur le web, `application/json` déclenche un préflight CORS
-      // (OPTIONS). `text/plain` en fait une requête « simple » (pas de
-      // préflight) ; Supabase et Apps Script parsent le JSON quel que
-      // soit le type déclaré.
-      // En natif (Android/iOS), pas de CORS : on garde `application/json`.
+      // Sur le web, `application/json` sur un corps JSON déclenche un
+      // préflight CORS (OPTIONS). Le web envoie donc le corps en `text/plain`
+      // (« requête simple », pas de préflight) ; Apps Script lit
+      // `e.postData.contents` et parse le JSON quel que soit le type déclaré.
+      //
+      // Côté Supabase, seuls les en-têtes `apikey` / `Authorization` /
+      // `X-Client-Info` évitent le préflight : l'en-tête personnalisé
+      // `X-DTNH-Auth` reste donc réservé au natif, et le web s'authentifie par
+      // `Authorization` + l'`apikey` publishable.
       'Content-Type': kIsWeb
           ? 'text/plain; charset=utf-8'
           : 'application/json; charset=utf-8',
       'Accept': 'application/json',
     };
+    final anonKey = AppConfig.supabaseAnonKey.trim();
+    if (anonKey.isNotEmpty) {
+      headers['apikey'] = anonKey;
+    }
     try {
       final token = await _tokens.currentAccessToken();
       if (token != null && token.isNotEmpty) {
-        headers['X-DTNH-Auth'] = 'Bearer $token';
+        headers['Authorization'] = 'Bearer $token';
+        if (!kIsWeb) {
+          headers['X-DTNH-Auth'] = 'Bearer $token';
+        }
       }
     } on Object {
       // Une session illisible ne doit jamais bloquer un envoi hors-ligne.
     }
     return headers;
+  }
+
+  /// `true` si une session Google est disponible pour ce build.
+  ///
+  /// Permet aux messages d'erreur de distinguer « aucun secret et aucune
+  /// session » (vraiment bloquant) de « secret absent mais compte connecté »
+  /// (qui fonctionne) : c'est la source de confusion qui faisait croire à une
+  /// synchronisation non configurée.
+  Future<bool> hasSession() async {
+    try {
+      final token = await _tokens.currentAccessToken();
+      return token != null && token.isNotEmpty;
+    } on Object {
+      return false;
+    }
   }
 
   Future<Map<String, dynamic>> _postJson(Uri uri, String body) async {

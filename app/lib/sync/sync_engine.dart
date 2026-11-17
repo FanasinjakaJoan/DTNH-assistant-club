@@ -74,6 +74,16 @@ class SyncEngine {
   final SyncQueueRepository _queue;
   final AppsScriptClient _client;
   final SettingsRepository _settings;
+
+  /// Dernier essai de récupération de configuration (anti-rebond).
+  DateTime? _lastRecoveryAt;
+
+  /// Le serveur a répondu, mais le club n'utilise pas Google Sheets.
+  ///
+  /// Permet d'afficher « ce club synchronise vers Supabase, changez de cible »
+  /// plutôt qu'un « non configuré » trompeur, qui laisserait croire à une
+  /// panne alors que la configuration est simplement absente par choix.
+  bool _clubHasNoSheets = false;
   final Uuid _uuid;
 
   /// Nombre maximum de tentatives avant passage en `ERROR` définitif
@@ -89,9 +99,24 @@ class SyncEngine {
     final target = settings.syncTargetLabel;
 
     if (!settings.hasSyncTarget) {
+      // Dernier recours avant d'échouer : si une session Google existe, on
+      // (re)demande la configuration du club — c'est exactement le scénario
+      // que l'utilisateur décrit (« il suffit de se connecter »). Une URL
+      // peut arriver sans que l'appel au démarrage ait abouti (hors-ligne à
+      // ce moment-là, session rétablie depuis...).
+      final recovered = await _recoverConfiguration();
+      if (recovered) {
+        return pushPending(batchSize: batchSize);
+      }
       throw SyncConfigurationException(
-        'Synchronisation non configurée : renseignez l\'URL et le secret de '
-        'la cible « $target » dans Réglages > Synchronisation.',
+        _clubHasNoSheets
+            ? 'Ce club ne synchronise pas vers Google Sheets (cible '
+                '« $target » sans URL). Choisissez la cible « Supabase » dans '
+                'Réglages > Synchronisation — elle fonctionne sans saisie.'
+            : 'Synchronisation non configurée : aucune URL pour la cible '
+                '« $target ». Connectez-vous avec Google (la configuration '
+                'du club est alors récupérée automatiquement) ou renseignez '
+                'l\'URL dans Réglages > Synchronisation.',
       );
     }
 
@@ -255,6 +280,45 @@ class SyncEngine {
       error: lastError,
       remaining: remaining,
     );
+  }
+
+  /// Tente de récupérer la configuration du club, une seule fois par passage.
+  ///
+  /// Renvoie `true` si une URL de synchronisation est disponible après
+  /// l'appel. Volontairement silencieux : c'est un chemin de secours, l'appel
+  /// nominal se fait au démarrage / à la connexion.
+  Future<bool> _recoverConfiguration() async {
+    // Anti-rebond : une panne réseau ne doit pas provoquer un appel de
+    // configuration à chaque item en échec. 60 s suffisent à absorber le cas
+    // d'une reprise en rafale sans bloquer une nouvelle tentative utile.
+    final now = DateTime.now();
+    if (_lastRecoveryAt != null &&
+        now.difference(_lastRecoveryAt!) < const Duration(seconds: 60)) {
+      return false;
+    }
+    _lastRecoveryAt = now;
+    try {
+      final client = _client;
+      if (!await client.hasSession()) return false;
+      final settings = _settings.current;
+      final endpoint = settings.configEndpoint;
+      if (endpoint.trim().isEmpty) return false;
+      final club = await client.fetchClubConfig(
+        webhookUrl: endpoint,
+        secret: settings.configSecret,
+      );
+      _clubHasNoSheets = !club.hasSheets;
+      if (!club.hasSheets) return false;
+      await _settings.saveClubConfig(
+        webhookUrl: club.webhookUrl ?? '',
+        webhookSecret: club.webhookSecret ?? '',
+        sheetId: club.sheetId,
+      );
+      return _settings.current.hasSyncTarget;
+    } catch (_) {
+      // Échec silencieux : l'appelant produit déjà un message explicite.
+      return false;
+    }
   }
 
   Future<String> testConnection() => _client.ping(

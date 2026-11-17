@@ -143,7 +143,7 @@ class SyncScreen extends ConsumerWidget {
                 title: 'File vide',
                 message:
                     'Chaque pointage ou transaction apparaît ici jusqu\'à sa '
-                    'confirmation par Google Sheets.',
+                    'confirmation par le serveur du club.',
               ),
             )
           else
@@ -161,7 +161,7 @@ class SyncScreen extends ConsumerWidget {
                       if (!context.mounted) return;
                       showAppSnack(
                         context,
-                        'Webhook OK : $message',
+                        'Connexion OK : $message',
                         icon: Icons.wifi_tethering_rounded,
                       );
                     } catch (error) {
@@ -217,7 +217,9 @@ class SyncScreen extends ConsumerWidget {
                   text:
                       'Au retour du réseau (ou sur « Synchroniser maintenant »), '
                       'la file part vers la cible active : Edge Function '
-                      'Supabase (PostgreSQL) ou webhook Apps Script (Sheet).',
+                      'Supabase (PostgreSQL) ou webhook Apps Script (Sheet). '
+                      'La connexion Google authentifie l\'envoi, sans secret '
+                      'à saisir.',
                 ),
                 _HowItWorksLine(
                   index: '3',
@@ -277,8 +279,9 @@ class _StatusCard extends StatelessWidget {
       icon = Icons.link_off_rounded;
       title = 'Synchronisation non configurée';
       subtitle =
-          'Renseignez l\'URL et le secret de la cible « $targetLabel » dans '
-          'les réglages pour activer l\'envoi des données.';
+          'Aucune adresse de synchronisation pour la cible « $targetLabel ». '
+          'Connectez-vous avec Google : la configuration du club est alors '
+          'récupérée automatiquement.';
     } else if (!isOnline) {
       accent = AppColors.amber;
       icon = Icons.cloud_off_rounded;
