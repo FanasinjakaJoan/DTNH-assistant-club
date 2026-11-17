@@ -1,4 +1,7 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
+import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/config/app_config.dart';
@@ -78,6 +81,20 @@ class AuthService {
 
   static final AuthService instance = AuthService._();
 
+  /// Message affiché quand le fournisseur Google est désactivé côté serveur.
+  ///
+  /// Partagé entre le pré-contrôle de [signInWithGoogle] et
+  /// [_friendlyMessage] pour éviter toute divergence de formulation.
+  static const String googleDisabledMessage =
+      'La connexion Google n\'est pas encore activée sur le serveur. '
+      'Un administrateur doit l\'activer dans le tableau de bord Supabase '
+      '(Authentication > Providers > Google) avec le Client ID et le Client '
+      'Secret créés dans Google Cloud Console.';
+
+  /// Client HTTP injectable (tests).
+  @visibleForTesting
+  static http.Client httpClient = http.Client();
+
   /// `true` si le projet Supabase a pu être initialisé (clé présente).
   bool get isReady {
     try {
@@ -89,6 +106,39 @@ class AuthService {
   }
 
   SupabaseClient get _client => Supabase.instance.client;
+
+  /// Interroge `/auth/v1/settings` pour savoir si un fournisseur est activé.
+  ///
+  /// Renvoie `true`/`false` si l'information a pu être lue, `null` en cas
+  /// d'échec réseau ou de délai dépassé : dans ce dernier cas on laisse le flux
+  /// OAuth se dérouler normalement (l'application reste utilisable hors-ligne).
+  @visibleForTesting
+  static Future<bool?> isProviderEnabled(
+    String provider, {
+    http.Client? client,
+    String? supabaseUrl,
+    String? anonKey,
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    final url = Uri.parse('${supabaseUrl ?? AppConfig.supabaseUrl}/auth/v1/settings');
+    try {
+      final response = await (client ?? httpClient)
+          .get(
+            url,
+            headers: <String, String>{'apikey': anonKey ?? AppConfig.supabaseAnonKey},
+          )
+          .timeout(timeout);
+      if (response.statusCode != 200) return null;
+      final body = jsonDecode(response.body);
+      if (body is! Map) return null;
+      final external = body['external'];
+      if (external is! Map) return null;
+      final value = external[provider];
+      return value is bool ? value : null;
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// Utilisateur courant, ou `null` si non connecté.
   AuthUser? get currentUser {
@@ -120,6 +170,18 @@ class AuthService {
         'build.',
       );
     }
+
+    // Pré-contrôle : Supabase répond `400 Unsupported provider: provider is not
+    // enabled` tant que le fournisseur Google n'est pas activé dans le tableau
+    // de bord. Sur le web, `signInWithOAuth` redirige la page vers cette
+    // réponse JSON, ce qui remplace l'application et affiche l'erreur brute
+    // « code 400 » à l'utilisateur. On interroge donc `/auth/v1/settings`
+    // d'abord pour rester dans l'app et afficher un message actionnable.
+    final googleEnabled = await AuthService.isProviderEnabled('google');
+    if (googleEnabled == false) {
+      throw const AuthConfigurationException(googleDisabledMessage);
+    }
+
     try {
       await _client.auth.signInWithOAuth(
         OAuthProvider.google,
@@ -155,9 +217,7 @@ class AuthService {
     final lower = raw.toLowerCase();
     if (lower.contains('provider is not enabled') ||
         lower.contains('unsupported provider')) {
-      return 'La connexion Google n\'est pas encore activée sur le serveur. '
-          'Un administrateur doit l\'activer dans le tableau de bord Supabase '
-          '(Authentication > Providers > Google).';
+      return googleDisabledMessage;
     }
     if (lower.contains('redirect') && lower.contains('not allowed')) {
       return 'URL de retour non autorisée. Elle doit figurer dans les '
