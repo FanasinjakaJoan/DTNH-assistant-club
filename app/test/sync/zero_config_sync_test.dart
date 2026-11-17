@@ -294,7 +294,7 @@ void main() {
     setUp(() async {
       tempDir = await Directory.systemTemp.createTemp('dtnh_autoconfig_');
       database = await LocalDatabase.open(directory: tempDir.path);
-      final dao = SyncQueueDao(database.syncBox);
+      // `SyncQueueDao` prend la base entière (elle résout elle-même sa box).
       queue = SyncQueueRepositoryImpl(dao: SyncQueueDao(database));
       attendance = AttendanceRepositoryImpl(
         dao: AttendanceDao(database),
